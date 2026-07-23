@@ -1,5 +1,7 @@
-"""Startup splash: logo scales/fades in, holds, then a two-stage exit
-reveals the app.
+"""Startup splash: logo fades in, holds, then a two-stage exit reveals the
+app. No scaling or movement anywhere -- the logo sits at a fixed size the
+entire time and only its opacity ever animates, which reads as clean and
+deliberate rather than a "zoom" effect competing for attention.
 
 This is an *overlay widget inside the main window*, not a separate
 top-level window. An earlier version was a standalone frameless QWidget
@@ -47,7 +49,6 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve,
-    QParallelAnimationGroup,
     QPropertyAnimation,
     Qt,
     QSequentialAnimationGroup,
@@ -65,27 +66,25 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-# Entrance: logo grows + fades in together, ease-out (Material's
-# "deceleration" curve -- enters at full speed, settles gently).
+# Entrance: logo fades in alone, ease-out (Material's "deceleration"
+# curve -- enters at full speed, settles gently). No scale change.
 ENTER_MS = 380
-SCALE_ENTER_FROM = 0.90
 
-# Hold at full size/opacity so the wordmark is actually readable.
+# Hold at full opacity so the wordmark is actually readable.
 HOLD_MS = 550
 
-# Exit stage 1: the logo *alone* shrinks + fades out, ease-in (Material's
+# Exit stage 1: the logo alone fades out, ease-in (Material's
 # "acceleration" curve -- exiting elements get out of the way quickly).
 # The background curtain is untouched here, still fully opaque, so there
 # is never a moment where a translucent logo and the UI underneath are
 # both visible at once.
 LOGO_EXIT_MS = 200
-SCALE_EXIT_TO = 0.94
 
 # Exit stage 2: only once the logo has fully disappeared does the opaque
 # background curtain itself fade away, revealing the real window content.
 CURTAIN_EXIT_MS = 240
 
-LOGO_MAX = 168  # was 220 -- smaller reads as a mark, not a poster
+LOGO_MAX = 168  # fixed size -- never scaled up or down during the animation
 
 
 class SplashOverlay(QWidget):
@@ -129,7 +128,7 @@ class SplashOverlay(QWidget):
 
         self._curtain_alpha = 255  # 0-255, animated directly via stylesheet
         self._apply_style()
-        self._apply_logo(scale=SCALE_ENTER_FROM)
+        self._apply_logo()
 
         self._group = self._build_sequence()
 
@@ -140,45 +139,23 @@ class SplashOverlay(QWidget):
     def _build_sequence(self) -> QSequentialAnimationGroup:
         group = QSequentialAnimationGroup(self)
 
-        # -- Entrance: scale + fade in together, ease-out.
+        # -- Entrance: fade in only, ease-out. No scale change.
         enter_fade = QPropertyAnimation(self._logo_effect, b"opacity", self)
         enter_fade.setDuration(ENTER_MS)
         enter_fade.setStartValue(0.0)
         enter_fade.setEndValue(1.0)
         enter_fade.setEasingCurve(QEasingCurve.OutCubic)
 
-        enter_scale = QVariantAnimation(self)
-        enter_scale.setDuration(ENTER_MS)
-        enter_scale.setStartValue(SCALE_ENTER_FROM)
-        enter_scale.setEndValue(1.0)
-        enter_scale.setEasingCurve(QEasingCurve.OutCubic)
-        enter_scale.valueChanged.connect(self._set_logo_scale)
-
-        enter = QParallelAnimationGroup(self)
-        enter.addAnimation(enter_fade)
-        enter.addAnimation(enter_scale)
-
-        # -- Exit stage 1: logo alone shrinks + fades out, ease-in.
+        # -- Exit stage 1: logo alone fades out, ease-in. No scale change.
         logo_exit_fade = QPropertyAnimation(self._logo_effect, b"opacity", self)
         logo_exit_fade.setDuration(LOGO_EXIT_MS)
         logo_exit_fade.setStartValue(1.0)
         logo_exit_fade.setEndValue(0.0)
         logo_exit_fade.setEasingCurve(QEasingCurve.InCubic)
 
-        logo_exit_scale = QVariantAnimation(self)
-        logo_exit_scale.setDuration(LOGO_EXIT_MS)
-        logo_exit_scale.setStartValue(1.0)
-        logo_exit_scale.setEndValue(SCALE_EXIT_TO)
-        logo_exit_scale.setEasingCurve(QEasingCurve.InCubic)
-        logo_exit_scale.valueChanged.connect(self._set_logo_scale)
-
-        logo_exit = QParallelAnimationGroup(self)
-        logo_exit.addAnimation(logo_exit_fade)
-        logo_exit.addAnimation(logo_exit_scale)
-
         # -- Exit stage 2: only starts once stage 1 has fully finished
-        # (they're siblings in a *sequential* group, not parallel) -- the
-        # logo is completely invisible before the curtain begins to lift.
+        # (they're siblings in a *sequential* group) -- the logo is
+        # completely invisible before the curtain begins to lift.
         curtain_exit = QVariantAnimation(self)
         curtain_exit.setDuration(CURTAIN_EXIT_MS)
         curtain_exit.setStartValue(255)
@@ -186,15 +163,12 @@ class SplashOverlay(QWidget):
         curtain_exit.setEasingCurve(QEasingCurve.InCubic)
         curtain_exit.valueChanged.connect(self._set_curtain_alpha)
 
-        group.addAnimation(enter)
+        group.addAnimation(enter_fade)
         group.addPause(HOLD_MS)
-        group.addAnimation(logo_exit)
+        group.addAnimation(logo_exit_fade)
         group.addAnimation(curtain_exit)
         group.finished.connect(self._on_finished)
         return group
-
-    def _set_logo_scale(self, scale: float) -> None:
-        self._apply_logo(scale=scale)
 
     def _set_curtain_alpha(self, alpha: int) -> None:
         self._curtain_alpha = alpha
@@ -210,7 +184,7 @@ class SplashOverlay(QWidget):
         # app had a light theme to select for.
         return self._assets_dir / "logo_on_dark.png"
 
-    def _apply_logo(self, scale: float = 1.0) -> None:
+    def _apply_logo(self) -> None:
         if self._master_pixmap is None:
             path = self._logo_path()
             if path.exists():
@@ -226,10 +200,18 @@ class SplashOverlay(QWidget):
             )
             return
 
-        target = max(1, int(LOGO_MAX * scale))
+        # Rendered once at a fixed size and never rescaled afterwards --
+        # scaling a pixmap up/down every frame during a zoom animation is
+        # what made the old version look soft/cheap. Sampling at the
+        # screen's actual device pixel ratio (then tagging the pixmap with
+        # that ratio) keeps it crisp on HiDPI/Retina displays instead of
+        # rendering at 1x and letting Qt stretch it.
+        dpr = self.devicePixelRatioF() or 1.0
+        target = max(1, int(LOGO_MAX * dpr))
         pixmap = self._master_pixmap.scaled(
             target, target, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
+        pixmap.setDevicePixelRatio(dpr)
         self._logo_label.setPixmap(pixmap)
 
     def _apply_style(self) -> None:
