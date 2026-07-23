@@ -1,0 +1,13 @@
+build/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Bundled binaries -- fetched fresh by CI (see .github/workflows/build.yml),
+# kept locally by hand per README.md. Do not commit these.
+ffmpeg.exe
+ffprobe.exe
+ffplay.exe
+deno.exe

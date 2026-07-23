@@ -1,0 +1,86 @@
+name: Build Windows + macOS executables
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg via Chocolatey
+        run: choco install ffmpeg-full -y
+
+      - name: Copy ffmpeg/ffprobe next to the project
+        shell: pwsh
+        run: |
+          $ffmpeg = (Get-Command ffmpeg).Source
+          $ffprobe = (Get-Command ffprobe).Source
+          Copy-Item $ffmpeg -Destination .\ffmpeg.exe
+          Copy-Item $ffprobe -Destination .\ffprobe.exe
+
+      - name: Download Deno
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" -OutFile deno.zip
+          Expand-Archive deno.zip -DestinationPath .
+          Remove-Item deno.zip
+
+      - name: Build with PyInstaller
+        run: pyinstaller build.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Downloader-windows
+          path: dist/YouTube Downloader.exe
+
+  build-macos:
+    # GitHub's macos-latest runners are Apple Silicon (arm64), so this
+    # produces an arm64 .app -- the ffmpeg/ffprobe from Homebrew and the
+    # deno binary below both match that. Friends on Intel Macs would need
+    # Rosetta (usually already installed) or a separate x86_64 runner.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg via Homebrew
+        run: brew install ffmpeg
+
+      - name: Copy ffmpeg/ffprobe next to the project
+        run: |
+          cp "$(command -v ffmpeg)" ./ffmpeg
+          cp "$(command -v ffprobe)" ./ffprobe
+
+      - name: Download Deno
+        run: |
+          curl -fsSL -o deno.zip https://github.com/denoland/deno/releases/latest/download/deno-aarch64-apple-darwin.zip
+          unzip deno.zip -d .
+          rm deno.zip
+          chmod +x deno
+
+      - name: Build with PyInstaller
+        run: pyinstaller build.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Downloader-macos
+          path: dist/YouTube Downloader.app
