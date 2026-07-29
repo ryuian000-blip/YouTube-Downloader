@@ -73,14 +73,29 @@ binaries to the repo.
 ### macOS Gatekeeper warning
 
 This app isn't signed with an Apple Developer certificate or notarized (that
-requires a paid Apple Developer account), so the first time a friend opens
-the built `.app`, macOS will refuse to launch it with an "Apple could not
-verify..." or "unidentified developer" message. The fix is one-time and
-doesn't need Terminal: right-click (or Control-click) `YouTube
-Downloader.app` and choose **Open**, then confirm **Open** again in the
-dialog that appears. After that, it opens normally forever, including via
-double-click. Worth mentioning to friends before you send it over so it
-doesn't look broken.
+requires a paid Apple Developer account), only ad-hoc signed in CI
+(`codesign --force --deep --sign -`, see `build.yml`) so it at least
+satisfies Apple Silicon's requirement that executables carry *some*
+signature. So the first time a friend opens the built `.app`, macOS will
+refuse to launch it with an "Apple could not verify..." or "unidentified
+developer" message. The fix is one-time and doesn't need Terminal:
+right-click (or Control-click) `YouTube Downloader.app` and choose **Open**,
+then confirm **Open** again in the dialog that appears. After that, it opens
+normally forever, including via double-click. Worth mentioning to friends
+before you send it over so it doesn't look broken.
+
+If a friend instead sees **"is damaged and can't be opened, you should move
+it to Trash"** (no Open option at all), that means Gatekeeper couldn't
+validate the signature -- either they're on a build from before the ad-hoc
+codesign step was added, or the zip transfer mangled it. One Terminal
+command clears it:
+
+```bash
+xattr -cr ~/Downloads/"YouTube Downloader.app"
+```
+
+(adjust the path if they moved it elsewhere first) -- then double-click or
+right-click > Open as above.
 
 ## What's actually implemented
 

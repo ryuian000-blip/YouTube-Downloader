@@ -79,6 +79,17 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller build.spec
 
+      - name: Ad-hoc codesign the app bundle
+        # No Apple Developer account, so this can't be a real Developer ID
+        # signature or notarization -- but an unsigned arm64 .app combined
+        # with the quarantine flag macOS adds on download makes Gatekeeper
+        # refuse to open it at all ("is damaged and can't be opened", no
+        # bypass). Ad-hoc signing (identity "-") satisfies arm64's signing
+        # requirement so Gatekeeper falls back to its normal "unidentified
+        # developer" prompt instead, which a friend can dismiss with one
+        # right-click > Open (see README's Gatekeeper section).
+        run: codesign --force --deep --sign - "dist/YouTube Downloader.app"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
