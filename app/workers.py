@@ -9,13 +9,13 @@ pattern, per the rebuild brief.
 
 from __future__ import annotations
 
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 import yt_dlp
+from yt_dlp.networking.common import Request as YdlRequest
 
 
 # ---------------------------------------------------------------------------
@@ -36,12 +36,20 @@ class VideoInfo:
     raw: dict = field(repr=False, default_factory=dict)
 
 
-def _fetch_thumbnail(url: str | None) -> QImage | None:
+def _fetch_thumbnail(ydl: yt_dlp.YoutubeDL, url: str | None) -> QImage | None:
     if not url:
         return None
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(request, timeout=8) as response:
+        # Goes through yt-dlp's own request director (ydl.urlopen), not a
+        # bare urllib.request.urlopen -- a plain urllib call uses Python's
+        # default SSL context, which on a PyInstaller-frozen macOS build has
+        # no access to the system trust store and fails every HTTPS request
+        # with "certificate verify failed: unable to get local issuer
+        # certificate". yt-dlp's own networking stack already handles this
+        # correctly (that's why the info/title fetch above works fine on
+        # the same machine), so reusing it here fixes the thumbnail too.
+        request = YdlRequest(url, headers={"User-Agent": "Mozilla/5.0"})
+        with ydl.urlopen(request) as response:
             data = response.read()
     except Exception:
         # Never fatal -- a video with unreachable thumbnail artwork should
@@ -71,11 +79,11 @@ class FetchWorker(QThread):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(self._url, download=False)
+                if not info:
+                    self.failed.emit("Couldn't read that link. Double-check the URL and try again.")
+                    return
+                thumbnail = _fetch_thumbnail(ydl, info.get("thumbnail"))
         except Exception:
-            self.failed.emit("Couldn't read that link. Double-check the URL and try again.")
-            return
-
-        if not info:
             self.failed.emit("Couldn't read that link. Double-check the URL and try again.")
             return
 
@@ -88,7 +96,6 @@ class FetchWorker(QThread):
             reverse=True,
         )
         title = info.get("title") or "Untitled video"
-        thumbnail = _fetch_thumbnail(info.get("thumbnail"))
         self.succeeded.emit(
             VideoInfo(title=title, heights=heights, thumbnail=thumbnail, raw=info)
         )
