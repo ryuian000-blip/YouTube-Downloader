@@ -218,6 +218,12 @@ def build_stylesheet(c: ColorTokens) -> str:
         color: {c.TEXT_MUTED};
     }}
 
+    /* The clickable video-url link on each History row -- default
+       rich-text link blue would clash with this palette. */
+    QLabel a {{
+        color: {c.ACCENT};
+    }}
+
     /* The fetched video's thumbnail, next to its title -- so someone can
        recognize the specific video at a glance rather than only reading
        a title. The pixmap set on this label is already clipped to
@@ -413,7 +419,12 @@ def build_stylesheet(c: ColorTokens) -> str:
     /* -------------------------------------------------------------- */
     /* Scroll area (only if ever needed)                                */
     /* -------------------------------------------------------------- */
-    QScrollArea {{
+    /* QScrollArea's own background-color rule doesn't reach its internal
+       viewport widget (a separate child QWidget Qt creates to actually
+       paint scrolled content) -- without targeting it explicitly too, the
+       viewport keeps its default palette background, showing up as a
+       stray light box behind/below scrolled content in dark mode. */
+    QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget {{
         border: none;
         background-color: transparent;
     }}

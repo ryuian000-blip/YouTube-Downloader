@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QRectF, QSize, Qt
-from PySide6.QtGui import QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QSize, Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -25,11 +25,15 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app import binaries, theme
+from app.history import HistoryStore
+from app.history_view import HistoryPage
+from app.imaging import fit_pixmap, rounded_pixmap
 from app.splash import SplashOverlay
 from app.theme_manager import ThemeManager
 from app.widgets import (
@@ -65,32 +69,6 @@ def _card() -> QFrame:
     frame = QFrame()
     frame.setProperty("card", "true")
     return frame
-
-
-def _fit_pixmap(pixmap: QPixmap, size: QSize) -> QPixmap:
-    """Scale to fill ``size`` completely (may overshoot one dimension)
-    then center-crop the overshoot away, instead of letterboxing -- a
-    thumbnail crop reads as normal; a thumbnail with bars around it reads
-    as broken."""
-    scaled = pixmap.scaled(size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    x = max(0, (scaled.width() - size.width()) // 2)
-    y = max(0, (scaled.height() - size.height()) // 2)
-    return scaled.copy(x, y, size.width(), size.height())
-
-
-def _rounded_pixmap(pixmap: QPixmap, radius: int) -> QPixmap:
-    """Clip to rounded corners so the thumbnail matches the rest of the
-    app's rounded-corner language instead of sitting in a hard-edged box."""
-    result = QPixmap(pixmap.size())
-    result.fill(Qt.transparent)
-    painter = QPainter(result)
-    painter.setRenderHint(QPainter.Antialiasing)
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(pixmap.rect()), radius, radius)
-    painter.setClipPath(path)
-    painter.drawPixmap(0, 0, pixmap)
-    painter.end()
-    return result
 
 
 class MainWindow(QMainWindow):
@@ -170,15 +148,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        central = QWidget()
-        central.setObjectName("centralWidget")
-        self.setCentralWidget(central)
+        # QStackedWidget, not a dropdown/popover or a second OS window: the
+        # history page needs real vertical space for a scrollable,
+        # searchable, thumbnail-bearing list, which a dropdown can't give
+        # it in a window this compact -- and a separate window would fight
+        # the "redownload takes you back to the normal window" flow, which
+        # is naturally just a page swap within a single window.
+        self._stack = QStackedWidget()
+        self._stack.setObjectName("centralWidget")
+        self.setCentralWidget(self._stack)
 
-        self._outer_layout = outer = QVBoxLayout(central)
+        download_page = QWidget()
+        self._outer_layout = outer = QVBoxLayout(download_page)
         outer.setContentsMargins(
             theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG
         )
         outer.setSpacing(theme.SPACE_LG)
+
+        outer.addLayout(self._build_header_row())
 
         # Spacer that gets animated to zero on first successful fetch,
         # which is what produces the "docks to the top" motion. Given an
@@ -215,6 +202,25 @@ class MainWindow(QMainWindow):
         self._progress_bar.setVisible(False)
         self._progress_status_label.setVisible(False)
         self._download_btn.setVisible(False)
+
+        self._history = HistoryStore()
+        self._history_page = HistoryPage(self._history, self._theme_manager.colors(), self)
+        self._history_page.back_requested.connect(lambda: self._stack.setCurrentIndex(0))
+        self._history_page.redownload_requested.connect(self._on_history_redownload)
+
+        self._stack.addWidget(download_page)      # index 0
+        self._stack.addWidget(self._history_page)  # index 1
+        self._stack.setCurrentIndex(0)
+
+    def _build_header_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self._history_btn = AnimatedButton("History")
+        self._history_btn.setFixedHeight(32)
+        self._history_btn.setBorderRadius(16)
+        self._animated_widgets.append(self._history_btn)
+        row.addWidget(self._history_btn)
+        return row
 
     def _build_hero_card(self) -> QFrame:
         card = _card()
@@ -405,6 +411,7 @@ class MainWindow(QMainWindow):
         self._change_dest_btn.clicked.connect(self._on_change_destination)
         self._download_btn.clicked.connect(self._on_download_clicked)
         self._mode_group.buttonToggled.connect(lambda *_: self._on_mode_changed())
+        self._history_btn.clicked.connect(self._on_show_history)
 
     def _apply_control_theme(self) -> None:
         c = self._theme_manager.colors()
@@ -494,8 +501,8 @@ class MainWindow(QMainWindow):
 
         if info.thumbnail is not None and not info.thumbnail.isNull():
             pixmap = QPixmap.fromImage(info.thumbnail)
-            pixmap = _fit_pixmap(pixmap, self.THUMBNAIL_SIZE)
-            pixmap = _rounded_pixmap(pixmap, theme.RADIUS_CONTROL)
+            pixmap = fit_pixmap(pixmap, self.THUMBNAIL_SIZE)
+            pixmap = rounded_pixmap(pixmap, theme.RADIUS_CONTROL)
             self._thumbnail_label.setPixmap(pixmap)
             self._thumbnail_label.setVisible(True)
         else:
@@ -739,7 +746,42 @@ class MainWindow(QMainWindow):
         # fresh, successful save (green) the way an actual download does.
         role = "statusWarning" if message.startswith("Already downloaded") else "statusSuccess"
         _set_role(self._progress_status_label, role)
+        self._record_history_entry()
 
     def _on_download_failed(self, message: str) -> None:
         self._progress_status_label.setText(message)
         _set_role(self._progress_status_label, "statusError")
+
+    # ------------------------------------------------------------------
+    # History
+    # ------------------------------------------------------------------
+
+    def _record_history_entry(self) -> None:
+        if self._video_info is None:
+            return
+        raw = self._video_info.raw
+        video_id = raw.get("id")
+        if not video_id:
+            return
+        # webpage_url, not the raw text the user pasted -- yt-dlp already
+        # normalizes it to one canonical form (e.g. youtu.be/<id> and
+        # youtube.com/watch?v=<id> both resolve to the same webpage_url),
+        # which is what keeps re-downloading a video from a differently
+        # formatted link updating the same history entry instead of
+        # creating a duplicate.
+        url = raw.get("webpage_url") or self._url_edit.text().strip()
+        self._history.add_or_update(
+            video_id=str(video_id),
+            title=self._video_info.title,
+            url=url,
+            thumbnail=self._video_info.thumbnail,
+        )
+
+    def _on_show_history(self) -> None:
+        self._history_page.reload()
+        self._stack.setCurrentIndex(1)
+
+    def _on_history_redownload(self, url: str) -> None:
+        self._stack.setCurrentIndex(0)
+        self._url_edit.setText(url)
+        self._on_fetch_clicked()
