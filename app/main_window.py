@@ -18,10 +18,8 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMessageBox,
-    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -42,6 +40,8 @@ from app.widgets import (
     DestinationButton,
     IconButton,
     PosterThumbnail,
+    UrlLineEdit,
+    set_role,
 )
 from app.workers import (
     MODE_AUDIO_ONLY,
@@ -59,15 +59,6 @@ from app.workers import (
 )
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
-
-
-def _set_role(widget: QWidget, value: str, prop: str = "role") -> None:
-    """Set a QSS dynamic property and force a style repolish, since Qt
-    doesn't repaint property-selector styles automatically after the
-    property changes at runtime."""
-    widget.setProperty(prop, value)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
 
 
 def _card() -> QFrame:
@@ -163,16 +154,12 @@ class MainWindow(QMainWindow):
         self._stack.setObjectName("centralWidget")
         self.setCentralWidget(self._stack)
 
-        # The poster layout needs roughly 850px of height once everything is
-        # revealed, which is taller than the usable area on a 768px-tall
-        # laptop screen. A scroll area means that case degrades to a
-        # scrollbar instead of Qt compressing cards below their minimum size
-        # and clipping their contents.
-        self._page_scroll = QScrollArea()
-        self._page_scroll.setWidgetResizable(True)
-        self._page_scroll.setFrameShape(QFrame.NoFrame)
-        self._page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
+        # No QScrollArea here, deliberately: the window is resized to
+        # exactly fit the revealed content instead (see the height math in
+        # _reveal_rest_of_ui), so nothing on this page ever needs, or can,
+        # scroll. This does mean an unusually short screen has no fallback
+        # if the fully-revealed page (roughly 850px tall) doesn't fit --
+        # that trade-off is intentional, not an oversight.
         self._page_content = QWidget()
         self._outer_layout = outer = QVBoxLayout(self._page_content)
         outer.setContentsMargins(
@@ -192,8 +179,7 @@ class MainWindow(QMainWindow):
         self._top_spacer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         outer.addWidget(self._top_spacer, 1)
 
-        outer.addLayout(self._build_url_row())
-        outer.addWidget(self._status_label)
+        outer.addWidget(self._build_url_card())
         outer.addWidget(self._build_media_card())
         outer.addWidget(self._build_controls_card())
         outer.addLayout(self._build_destination_row())
@@ -213,8 +199,6 @@ class MainWindow(QMainWindow):
         # than where it belongs, trailing after the button.
         outer.addStretch(1)
 
-        self._page_scroll.setWidget(self._page_content)
-
         # Hidden until a successful fetch.
         for widget in self._revealable():
             widget.setVisible(False)
@@ -224,7 +208,7 @@ class MainWindow(QMainWindow):
         self._history_page.back_requested.connect(lambda: self._stack.setCurrentIndex(0))
         self._history_page.redownload_requested.connect(self._on_history_redownload)
 
-        self._stack.addWidget(self._page_scroll)   # index 0
+        self._stack.addWidget(self._page_content)  # index 0
         self._stack.addWidget(self._history_page)  # index 1
         self._stack.setCurrentIndex(0)
 
@@ -242,13 +226,27 @@ class MainWindow(QMainWindow):
             self._dest_widget,
         ]
 
-    # -- top row: paste a link -------------------------------------------
+    # -- top card: paste a link -------------------------------------------
 
-    def _build_url_row(self) -> QHBoxLayout:
+    def _build_url_card(self) -> QFrame:
+        # Every other section on this page sits in a bordered SURFACE card
+        # (_card()); this was the one section that didn't, and floated
+        # directly against the window background instead.
+        card = _card()
+        self._url_card = card
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(
+            theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD
+        )
+        layout.setSpacing(theme.SPACE_SM)
+
         row = QHBoxLayout()
         row.setSpacing(theme.SPACE_SM)
 
-        self._url_edit = QLineEdit()
+        # UrlLineEdit, not a plain QLineEdit: it doubles as the surface a
+        # failed fetch reports itself on (see app/widgets.py and
+        # _on_fetch_failed below) instead of a separate error line.
+        self._url_edit = UrlLineEdit()
         self._url_edit.setPlaceholderText("Paste a YouTube link…")
         self._url_edit.setMinimumHeight(38)
         row.addWidget(self._url_edit, stretch=1)
@@ -268,11 +266,19 @@ class MainWindow(QMainWindow):
         self._animated_widgets.append(self._history_btn)
         row.addWidget(self._history_btn)
 
+        layout.addLayout(row)
+
+        # Only the ffmpeg/deno startup warning uses this now -- fetch
+        # failures moved onto the field itself (item 4), and the
+        # "Fetching…" message was removed outright (item 3; the fetch
+        # button's spinner already says as much).
         self._status_label = QLabel("")
         self._status_label.setProperty("role", "status")
         self._status_label.setWordWrap(True)
         self._status_label.setVisible(False)
-        return row
+        layout.addWidget(self._status_label)
+
+        return card
 
     # -- media card: thumbnail band + title block, one rounded object ------
 
@@ -457,7 +463,7 @@ class MainWindow(QMainWindow):
             "Heads up: " + ", ".join(missing) + " not found next to the app. "
             "Some downloads may fail until they're added."
         )
-        _set_role(self._status_label, "statusWarning")
+        set_role(self._status_label, "statusWarning")
         self._status_label.setVisible(True)
 
     # ------------------------------------------------------------------
@@ -539,15 +545,20 @@ class MainWindow(QMainWindow):
         if self._fetch_in_progress:
             return
 
-        url = self._url_edit.text().strip()
+        url = self._url_edit.url()
         if not url:
-            self._show_hero_status("Paste a YouTube link first.", "statusError")
+            # Routed through the same in-field error as a failed fetch
+            # (item 4) rather than the status label -- every URL problem
+            # now surfaces in one place instead of two.
+            self._url_edit.set_error("Paste a YouTube link first.")
             return
 
         self._fetch_in_progress = True
         self._fetch_btn.setEnabled(False)
         self._fetch_btn.setBusy(True)
-        self._show_hero_status("Fetching video info…", "status")
+        # No "Fetching video info…" message: the fetch button's own
+        # spinner (IconButton.setBusy above) already says a fetch is
+        # running, and this line just duplicated it.
 
         self._fetch_worker = FetchWorker(url, self)
         self._fetch_worker.succeeded.connect(self._on_fetch_succeeded)
@@ -561,17 +572,23 @@ class MainWindow(QMainWindow):
         self._fetch_btn.setEnabled(True)
 
     def _show_hero_status(self, text: str, role: str) -> None:
+        # The only remaining caller is _apply_binary_warning -- fetch
+        # failures now report on the URL field itself (see
+        # _on_fetch_failed / UrlLineEdit.set_error), not this label.
         self._status_label.setText(text)
-        _set_role(self._status_label, role)
+        set_role(self._status_label, role)
         self._status_label.setVisible(bool(text))
 
     def _on_fetch_failed(self, message: str) -> None:
-        self._show_hero_status(message, "statusError")
+        # message is FetchWorker's own text, passed straight through
+        # rather than re-typed here -- one copy of "Couldn't read that
+        # link..." to keep in sync, not two.
+        self._url_edit.set_error(message)
 
     def _on_fetch_succeeded(self, info: VideoInfo) -> None:
         self._video_info = info
         self._video_title_label.setText(info.title)
-        self._show_hero_status("", "status")
+        self._url_edit.clear_error()
         self._rescale_poster_thumb()
 
         self._quality_combo.blockSignals(True)
@@ -612,17 +629,119 @@ class MainWindow(QMainWindow):
         if self._controls_card.isVisible():
             return  # already revealed, e.g. fetching a second link
 
-        # 1) Collapse the top docking spacer from its current height to 0
-        #    -- this is what "docks" the title/hero card up toward the
-        #    window top. Once fully collapsed, retire it from the layout
-        #    entirely (see _retire_spacer): a QVBoxLayout's own uniform
-        #    inter-item spacing still reserves a full gap on *both* sides
-        #    of a zero-height widget, so leaving it in place stacks two
-        #    spacing gaps into one oversized empty band around where it
-        #    used to be. The trailing addStretch below the progress
-        #    section needs none of this -- see the comment where it's
-        #    added in _build_ui.
+        # Captured before anything else moves -- this is the docking
+        # animation's start value (step 4 below), independent of whatever
+        # happens to the spacer in between for measurement purposes.
         current_height = self._top_spacer.height()
+
+        # 1) Reveal the rest of the UI (still transparent -- opacity fades
+        #    in at the very end, once the window is its final size).
+        for widget in self._revealable():
+            widget.setVisible(True)
+
+        # 2) Measure the window's true final size as though the docking
+        #    spacer (step 4) were already retired -- its collapse is a
+        #    visual animation that hasn't run yet at this point in the
+        #    method, but the measurement below must reflect the SETTLED
+        #    layout, not this transient pre-animation one, or the window
+        #    ends up taller than the content needs by roughly however
+        #    tall the spacer still currently is. Temporarily remove it
+        #    from the layout for exactly this step (the same
+        #    removeWidget() _retire_spacer uses, and for the same
+        #    "a zero-height widget still reserves spacing on both sides"
+        #    reason documented there) and put it straight back afterward
+        #    -- step 4 needs it back in the layout to animate.
+        self._outer_layout.removeWidget(self._top_spacer)
+        self._outer_layout.invalidate()
+        self._outer_layout.activate()
+
+        # The window was sized to fit only the centered URL card. Now that
+        # four more sections have real content, the window itself needs to
+        # grow, or the layout is forced to compress cards below their own
+        # minimum size -- this is what actually caused overlapping rows
+        # before, and (via the same mechanism, just on the horizontal axis)
+        # is also what let the MODE row's radio labels get clipped: only
+        # height was grown here, never width, so on a machine where the
+        # real Segoe UI font renders those labels a bit wider than
+        # expected, the window stayed too narrow and the layout had no
+        # choice but to compress the radios below the width their text
+        # needs.
+        #
+        # _page_content is now the central widget's page directly (no
+        # QScrollArea wrapping it -- see _build_ui), so its geometry is
+        # exactly the window's client-area size, with no viewport/scroll
+        # chrome to account for.
+        screen = self.screen()
+        cap_h = int(screen.availableGeometry().height() * 0.9) if screen else 900
+        cap_w = int(screen.availableGeometry().width() * 0.9) if screen else 1200
+        # Width: grow-only, based on minimumSizeHint() rather than the
+        # segmented control's *preferred* width, which would let a machine
+        # whose font renders those labels wider than expected balloon the
+        # window past the size this layout was composed at.
+        target_width = min(self._page_content.minimumSizeHint().width(), cap_w)
+        new_width = max(self.width(), target_width)
+
+        # Height needs two passes, not one. QLayout.activate() sizes every
+        # child to fit the space _page_content ALREADY has -- if that's
+        # still the pre-fetch window (e.g. 640px) and the true content
+        # needs ~850px, activate() compresses everything to fit inside 640
+        # rather than reporting how tall it would like to be; measuring
+        # geometry right after activate() at the OLD size just measures
+        # that compression, not the real requirement. (sizeHint() doesn't
+        # help either: a plain QVBoxLayout's sizeHint() doesn't reliably
+        # account for PosterThumbnail's heightForWidth-driven height once
+        # nested two levels deep -- media card QFrame -> its QVBoxLayout ->
+        # PosterThumbnail -- a known rough edge in Qt's height-for-width
+        # propagation through nested layouts, confirmed by
+        # _media_card.sizeHint() under-reporting its own actual height by
+        # over 100px with no resize involved at all.)
+        #
+        # So: resize to a generously tall size FIRST, activate again so
+        # everything lays out at its true natural (uncompressed) height,
+        # measure the real bottom edge from that, and only then trim down
+        # to the exact final height. Both resizes happen synchronously
+        # before this method returns to the event loop, so nothing repaints
+        # in between -- the user only ever sees the final size.
+        self.resize(new_width, cap_h)
+        self._outer_layout.invalidate()
+        self._outer_layout.activate()
+        needed_height = self._dest_widget.geometry().bottom() + 1 + theme.SPACE_LG
+        # Height resizes to an EXACT match, not just "at least" -- the
+        # trailing addStretch(1) at the bottom of this layout (see
+        # _build_ui) would otherwise absorb any extra height the window
+        # happened to already have, which reads as a taller gap under the
+        # destination row than the identical SPACE_LG margin everywhere
+        # else. There's no scrollbar to fall back on if this undershoots a
+        # very short screen (see _build_ui's comment on removing the scroll
+        # area) -- capped at 90% of screen height is the only remaining
+        # safety net, and content would compress rather than clip or
+        # scroll in that case.
+        target_height = min(needed_height, cap_h)
+        if target_height != self.height():
+            self.resize(new_width, target_height)
+
+        # 3) Put the spacer back where _build_ui originally put it (first
+        #    item, stretch 1) -- step 4's animation needs it present in
+        #    the layout again. Its actual on-screen height right now is
+        #    whatever the layout naturally gives it in the now-final-sized
+        #    window (likely near zero, since real content fills almost
+        #    all of it) -- that's fine and expected, because the animation
+        #    immediately below forces maximumHeight to current_height as
+        #    the very first thing it does when started, and all of this
+        #    happens synchronously before any repaint, so there's nothing
+        #    for the user to see in between.
+        self._outer_layout.insertWidget(0, self._top_spacer, 1)
+
+        # 4) Collapse the top docking spacer from its pre-fetch height to
+        #    0 -- this is what "docks" the URL card up toward the window
+        #    top. Once fully collapsed, retire it from the layout entirely
+        #    (see _retire_spacer): a QVBoxLayout's own uniform inter-item
+        #    spacing still reserves a full gap on *both* sides of a
+        #    zero-height widget, so leaving it in place stacks two spacing
+        #    gaps into one oversized empty band around where it used to
+        #    be. The trailing addStretch at the bottom of this layout
+        #    needs none of this -- see the comment where it's added in
+        #    _build_ui.
         if current_height > 0:
             dock_anim = QPropertyAnimation(self._top_spacer, b"maximumHeight", self)
             dock_anim.setDuration(400)
@@ -635,58 +754,8 @@ class MainWindow(QMainWindow):
         else:
             self._retire_spacer(self._top_spacer)
 
-        # 2) Reveal the rest of the UI with a fade-in.
-        for widget in self._revealable():
-            widget.setVisible(True)
-
-        # Force the *central widget's* outer layout (not self.layout(),
-        # which on a QMainWindow is the internal QMainWindowLayout and
-        # doesn't touch the central widget's own QVBoxLayout) to re-run
-        # now that these cards have real content and a real sizeHint --
-        # otherwise the newly-shown cards keep whatever cramped geometry
-        # they had while hidden, and their children overlap the row below.
-        self._outer_layout.invalidate()
-        self._outer_layout.activate()
-
-        # The window was sized to fit only the centered hero card. Now
-        # that four more sections have real content, the window itself
-        # needs to grow, or the layout is forced to compress cards below
-        # their own minimum size -- this is what actually caused
-        # overlapping rows before, and (via the same mechanism, just on
-        # the horizontal axis) is also what let the MODE row's radio
-        # labels get clipped: only height was grown here, never width, so
-        # on a machine where the real Segoe UI font renders those labels
-        # a bit wider than expected, the window stayed too narrow and the
-        # layout had no choice but to compress the radios below the width
-        # their text needs. Grow both, each capped so it never overruns
-        # the screen.
-        # sizeHint() is taken from the scrolled *content* widget, not from
-        # the window: a QScrollArea reports only the size it would like its
-        # viewport to be, so asking the window would size it to the
-        # scrollbar rather than to the content and leave everything
-        # permanently scrolled.
-        needed = self._page_content.sizeHint()
-        chrome_h = self.height() - self._page_scroll.viewport().height()
-        chrome_w = self.width() - self._page_scroll.viewport().width()
-        screen = self.screen()
-        cap_h = int(screen.availableGeometry().height() * 0.9) if screen else 900
-        cap_w = int(screen.availableGeometry().width() * 0.9) if screen else 1200
-        target_height = min(needed.height() + chrome_h, cap_h)
-        # Width grows only to what the content genuinely *requires*, not to
-        # what it would prefer. Height has no such choice -- nothing here can
-        # shorten itself, so the window must fit it or scroll. Width is
-        # different now that the segmented control and the save path both
-        # elide: chasing the preferred width would let a machine whose font
-        # renders the mode labels wider than expected balloon the window far
-        # past the size this layout was composed at.
-        target_width = min(
-            self._page_content.minimumSizeHint().width() + chrome_w, cap_w
-        )
-        new_width = max(self.width(), target_width)
-        new_height = max(self.height(), target_height)
-        if new_width != self.width() or new_height != self.height():
-            self.resize(new_width, new_height)
-
+        # 5) Fade the rest of the UI in now that the window is its final
+        #    size.
         for widget in self._revealable():
             effect = QGraphicsOpacityEffect(widget)
             effect.setOpacity(0.0)
@@ -772,7 +841,14 @@ class MainWindow(QMainWindow):
 
         height = self._quality_combo.currentData()
         options = DownloadOptions(
-            url=self._url_edit.text().strip(),
+            # .url(), never .text() -- .text() returns whatever is
+            # currently DISPLAYED, which is the error message, not the
+            # URL, whenever the field is in its error state (see
+            # UrlLineEdit). The download row stays visible after one
+            # successful fetch, so a later failed fetch attempt could
+            # otherwise feed that error string straight into the next
+            # download's URL.
+            url=self._url_edit.url(),
             mode=self._current_mode(),
             height=height,
             audio_format=self._audio_format_combo.currentText().lower(),
@@ -820,7 +896,7 @@ class MainWindow(QMainWindow):
         """The status line sits inside the media card now, so it hides
         itself when empty rather than reserving a blank row in the card."""
         self._progress_status_label.setText(text)
-        _set_role(self._progress_status_label, role)
+        set_role(self._progress_status_label, role)
         self._progress_status_label.setVisible(bool(text))
 
     def _on_download_progress(self, pct: float, text: str) -> None:
@@ -858,7 +934,7 @@ class MainWindow(QMainWindow):
         # which is what keeps re-downloading a video from a differently
         # formatted link updating the same history entry instead of
         # creating a duplicate.
-        url = raw.get("webpage_url") or self._url_edit.text().strip()
+        url = raw.get("webpage_url") or self._url_edit.url()
 
         opts = self._last_download_options
         mode = opts.mode if opts else self._current_mode()
@@ -879,5 +955,10 @@ class MainWindow(QMainWindow):
 
     def _on_history_redownload(self, url: str) -> None:
         self._stack.setCurrentIndex(0)
+        # clear_error() before setText(): _in_error is otherwise still
+        # true from whatever the field's previous state was, which would
+        # make .url() return the OLD _real_url instead of this new one --
+        # setText() alone only changes what's displayed, not that flag.
+        self._url_edit.clear_error()
         self._url_edit.setText(url)
         self._on_fetch_clicked()

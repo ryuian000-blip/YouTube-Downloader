@@ -324,6 +324,21 @@ def build_stylesheet(c: ColorTokens) -> str:
         border: 1px solid {c.DISABLED_BORDER};
     }}
 
+    /* UrlLineEdit's failed-fetch state (see app/widgets.py). The :focus
+       variant has to be declared explicitly and after the plain :focus
+       rule above -- without it, focusing the field (exactly when the
+       user is looking at it, reading the error) would fall through to
+       the plain rule and the red border would vanish. */
+    QLineEdit[state="error"] {{
+        border: 1px solid {c.ERROR};
+        color: {c.ERROR};
+    }}
+    QLineEdit[state="error"]:focus {{
+        border: 1px solid {c.ERROR};
+        color: {c.ERROR};
+        background-color: {c.SURFACE};
+    }}
+
     /* -------------------------------------------------------------- */
     /* Buttons                                                          */
     /* -------------------------------------------------------------- */

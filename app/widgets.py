@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QRadioButton,
@@ -70,6 +71,19 @@ def _mix(c1: QColor, c2: QColor, t: float) -> QColor:
         round(c1.green() + (c2.green() - c1.green()) * t),
         round(c1.blue() + (c2.blue() - c1.blue()) * t),
     )
+
+
+def set_role(widget: QWidget, value: str, prop: str = "role") -> None:
+    """Set a QSS dynamic property and force a style repolish, since Qt
+    doesn't repaint property-selector styles automatically after the
+    property changes at runtime. Lives here (not in main_window.py, where
+    it originated) because UrlLineEdit below needs the exact same
+    unpolish/polish dance for its state="error" property, and duplicating
+    a three-line function across two modules isn't worth avoiding one
+    import."""
+    widget.setProperty(prop, value)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
 
 
 class AnimatedButton(QPushButton):
@@ -663,6 +677,9 @@ class AnimatedSegmentedControl(QWidget):
     PAD = 3          # inset of the thumb from the track edge
     H_PADDING = 14   # per-segment horizontal breathing room, used by sizeHint
     MIN_SEGMENT = 62  # narrowest a segment may get before the window must grow
+    FOCUS_PAD = 2    # gap reserved between the widget edge and the track, so
+                      # the focus ring has room to draw fully inside the clip
+                      # region instead of being cut off at the top/bottom
 
     def __init__(self, options: list[str], parent=None) -> None:
         super().__init__(parent)
@@ -721,13 +738,14 @@ class AnimatedSegmentedControl(QWidget):
     def _segment_width(self) -> float:
         if not self._options:
             return 0.0
-        return (self.width() - self.PAD * 2) / len(self._options)
+        track_w = self.width() - self.FOCUS_PAD * 2
+        return (track_w - self.PAD * 2) / len(self._options)
 
     def _index_at(self, x: float) -> int:
         seg = self._segment_width()
         if seg <= 0:
             return 0
-        idx = int((x - self.PAD) // seg)
+        idx = int((x - self.FOCUS_PAD - self.PAD) // seg)
         return max(0, min(len(self._options) - 1, idx))
 
     # -- interaction --------------------------------------------------------
@@ -768,7 +786,9 @@ class AnimatedSegmentedControl(QWidget):
         # three buttons of random width.
         widest = max((fm.horizontalAdvance(o) for o in self._options), default=0)
         w = (widest + self.H_PADDING * 2) * len(self._options) + self.PAD * 2
-        return QSize(int(w), max(38, fm.height() + 18))
+        # +FOCUS_PAD*2 on height only, so the track keeps its previous
+        # visual height rather than shrinking to make room for the ring.
+        return QSize(int(w), max(38, fm.height() + 18) + self.FOCUS_PAD * 2)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 (Qt override)
         # Deliberately NOT sizeHint() here, unlike AnimatedButton and
@@ -781,7 +801,7 @@ class AnimatedSegmentedControl(QWidget):
         # layout was designed around.
         fm = self.fontMetrics()
         w = self.MIN_SEGMENT * len(self._options) + self.PAD * 2
-        return QSize(int(w), max(38, fm.height() + 18))
+        return QSize(int(w), max(38, fm.height() + 18) + self.FOCUS_PAD * 2)
 
     # -- painting -----------------------------------------------------------
 
@@ -793,7 +813,16 @@ class AnimatedSegmentedControl(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        # Track is inset FOCUS_PAD from the widget's own bounds, not drawn
+        # edge-to-edge -- that reserved margin is where the focus ring below
+        # gets drawn. Previously the ring was drawn *outside* a track that
+        # already filled the full widget rect, which put roughly the outer
+        # half of its stroke past the widget's own bounds -- Qt clips all
+        # painting to that rect, so the ring's top and bottom arcs (the
+        # parts extending furthest from the pill's straight side edges)
+        # were simply never drawn.
+        outer = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        rect = outer.adjusted(self.FOCUS_PAD, self.FOCUS_PAD, -self.FOCUS_PAD, -self.FOCUS_PAD)
         radius = rect.height() / 2
         enabled = self.isEnabled()
 
@@ -844,7 +873,12 @@ class AnimatedSegmentedControl(QWidget):
         if self.hasFocus() and enabled:
             p.setPen(QPen(QColor(c.ACCENT), 1.5))
             p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), radius + 1, radius + 1)
+            # Halfway into the FOCUS_PAD margin: a 1.5px pen centered here
+            # extends +/-0.75px, which stays inside outer's own 0.5px inset
+            # from the real widget edge with room to spare -- nothing left
+            # to clip.
+            ring_rect = rect.adjusted(-1, -1, 1, 1)
+            p.drawRoundedRect(ring_rect, radius + 1, radius + 1)
 
         p.end()
 
@@ -1455,3 +1489,77 @@ class ElidedLabel(QLabel):
     def _apply_elide(self) -> None:
         fm = QFontMetrics(self.font())
         super().setText(fm.elidedText(self._full_text, Qt.ElideMiddle, max(0, self.width())))
+
+
+class UrlLineEdit(QLineEdit):
+    """The paste-a-link field, doubling as the surface for a failed fetch.
+
+    Rather than a separate error line elsewhere on the page, a bad URL
+    turns this field itself red and swaps its displayed text for the
+    error message. Clicking or tabbing back in swaps the message out for
+    the original URL -- still red, since nothing about the URL changed --
+    so it's immediately editable; actually editing it (not just focusing
+    it) is what clears the error and returns to normal styling.
+
+    url() is the one method every caller outside this class should use --
+    text() returns whatever is currently *displayed*, which is the error
+    message while self.isError() is true, not the URL a caller building a
+    DownloadOptions or a history entry actually wants.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._real_url = ""
+        self._error_message = ""
+        self._in_error = False
+        # textEdited, not textChanged: textEdited fires only for changes
+        # the user actually typed, never for a programmatic setText() --
+        # which is exactly the distinction that keeps focusInEvent's
+        # setText(self._real_url) below from immediately clearing the
+        # error it just switched the display text to reveal.
+        self.textEdited.connect(self._on_text_edited)
+
+    def url(self) -> str:
+        """The real pasted/typed URL, regardless of what's on screen."""
+        return self._real_url if self._in_error else self.text().strip()
+
+    def isError(self) -> bool:  # noqa: N802 (Qt naming)
+        return self._in_error
+
+    def set_error(self, message: str) -> None:
+        # Only capture text() -> _real_url the FIRST time an error starts.
+        # A second failed fetch on the same URL (e.g. retried without
+        # editing) calls this again while already in the error state, and
+        # by then text() is displaying either _real_url (if the field
+        # still has focus) or _error_message (if it doesn't) -- never the
+        # fresh URL a fresh capture would need. Re-capturing here would
+        # either be a no-op or, in the unfocused case, silently overwrite
+        # the real URL with the error message text.
+        if not self._in_error:
+            self._real_url = self.text().strip()
+        self._in_error = True
+        self._error_message = message
+        super().setText(message)
+        self.setCursorPosition(0)
+        set_role(self, "error", "state")
+
+    def clear_error(self) -> None:
+        if not self._in_error:
+            return
+        self._in_error = False
+        self._error_message = ""
+        set_role(self, "", "state")
+
+    def focusInEvent(self, event) -> None:
+        if self._in_error:
+            super().setText(self._real_url)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        if self._in_error:
+            super().setText(self._error_message)
+        super().focusOutEvent(event)
+
+    def _on_text_edited(self, _text: str) -> None:
+        if self._in_error:
+            self.clear_error()
