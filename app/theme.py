@@ -260,9 +260,20 @@ def build_stylesheet(c: ColorTokens) -> str:
         border: none;
     }}
 
+    /* The radius here rounds the label's own BACKGROUND, which is a
+       separate thing from the rounded clipping applied to its pixmap in
+       imaging.rounded_pixmap(). Both are needed: without this rule the
+       label painted a fully square SURFACE_ALT rectangle behind the
+       correctly-rounded pixmap, and that square background showed through
+       at the top-left and top-right as two small hard-edged notches.
+       The fill itself has to stay -- it is what renders the empty band
+       when a video's thumbnail can't be reached, and that state still
+       needs to hold the card's shape. */
     QLabel#posterThumb {{
         background-color: {c.SURFACE_ALT};
         border: none;
+        border-top-left-radius: {RADIUS_CARD}px;
+        border-top-right-radius: {RADIUS_CARD}px;
     }}
 
     QWidget#posterMeta {{
@@ -498,6 +509,20 @@ def build_stylesheet(c: ColorTokens) -> str:
     QProgressBar::chunk {{
         background-color: {c.ACCENT};
         border-radius: {RADIUS_CONTROL}px;
+    }}
+
+    /* The poster layout's scrubber: spans the media card edge-to-edge
+       directly beneath the artwork, so it drops the pill radius, the
+       border, and a couple of pixels of height. This override exists
+       because the rule above pins both min-height and max-height, and QSS
+       beats setFixedHeight() -- AnimatedProgressBar.setFlush() sets this
+       object name precisely so this rule can take effect. */
+    QProgressBar#flushProgressBar {{
+        border: none;
+        border-radius: 0px;
+        background-color: {c.SURFACE_ALT};
+        min-height: 5px;
+        max-height: 5px;
     }}
 
     /* -------------------------------------------------------------- */

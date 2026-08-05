@@ -39,7 +39,7 @@ from app.widgets import (
     AnimatedComboBox,
     AnimatedProgressBar,
     AnimatedSegmentedControl,
-    ElidedLabel,
+    DestinationButton,
     IconButton,
     PosterThumbnail,
 )
@@ -197,7 +197,6 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._build_media_card())
         outer.addWidget(self._build_controls_card())
         outer.addLayout(self._build_destination_row())
-        outer.addLayout(self._build_progress_section())
 
         # A trailing stretch, not a second collapsible spacer widget: it
         # needs no docking animation (nothing sits below it to dock
@@ -230,14 +229,17 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
 
     def _revealable(self) -> list[QWidget]:
-        """Everything that stays hidden until the first successful fetch."""
+        """Everything that stays hidden until the first successful fetch.
+
+        The progress bar and its status label are not listed: both now live
+        inside the media card, so they're revealed and faded in as part of
+        it. Listing them again here would attach a second
+        QGraphicsOpacityEffect to widgets already inside a fading parent.
+        """
         return [
             self._media_card,
             self._controls_card,
             self._dest_widget,
-            self._progress_bar,
-            self._progress_status_label,
-            self._download_btn,
         ]
 
     # -- top row: paste a link -------------------------------------------
@@ -288,6 +290,19 @@ class MainWindow(QMainWindow):
         self._thumbnail_label.setObjectName("posterThumb")
         layout.addWidget(self._thumbnail_label)
 
+        # Directly beneath the artwork and spanning the card edge-to-edge,
+        # so download progress reads as a scrubber belonging to this video
+        # rather than a detached bar somewhere further down the window.
+        # Squared off and slimmed for that reason (see setFlush) -- and it
+        # sits mid-card, not at an edge, so it can be full-bleed without
+        # fighting the card's rounded corners.
+        self._progress_bar = AnimatedProgressBar()
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setFlush(True)
+        self._animated_widgets.append(self._progress_bar)
+        layout.addWidget(self._progress_bar)
+
         meta = QWidget()
         meta.setObjectName("posterMeta")
         self._poster_meta = meta
@@ -306,6 +321,15 @@ class MainWindow(QMainWindow):
         self._chip_row.setSpacing(theme.SPACE_XS + 2)
         self._chip_row.addStretch(1)
         meta_layout.addLayout(self._chip_row)
+
+        # Download status lives in the card too, right under the bar it
+        # describes. Hidden while empty so it doesn't reserve a blank line
+        # in the card before a download has ever run.
+        self._progress_status_label = QLabel("")
+        self._progress_status_label.setProperty("role", "status")
+        self._progress_status_label.setWordWrap(True)
+        self._progress_status_label.setVisible(False)
+        meta_layout.addWidget(self._progress_status_label)
 
         layout.addWidget(meta)
         return card
@@ -375,57 +399,35 @@ class MainWindow(QMainWindow):
     # -- destination: one line, not a card --------------------------------
 
     def _build_destination_row(self) -> QHBoxLayout:
-        # A whole bordered card for one read-only path was the emptiest
-        # block in the old layout; as a single line with a folder icon it
-        # says the same thing in a quarter of the height.
+        # Destination and Download share one row: the path is now itself
+        # the control that changes it (DestinationButton), which is what
+        # freed the slot the old "Change" button occupied for the primary
+        # action. Progress moved up into the media card, so this row is the
+        # last thing in the window.
         self._dest_widget = QWidget()
         row = QHBoxLayout(self._dest_widget)
-        row.setContentsMargins(theme.SPACE_XS, 0, 0, 0)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme.SPACE_SM)
 
-        self._dest_icon = IconButton("folder", diameter=22)
-        self._dest_icon.setEnabled(False)
-        self._dest_icon.setToolTip("Where downloads are saved")
-        self._animated_widgets.append(self._dest_icon)
-        row.addWidget(self._dest_icon)
+        self._dest_button = DestinationButton()
+        self._dest_button.setPath(str(self._output_dir))
+        self._animated_widgets.append(self._dest_button)
+        row.addWidget(self._dest_button, stretch=1)
 
-        self._dest_path_label = ElidedLabel(str(self._output_dir))
-        self._dest_path_label.setProperty("role", "path")
-        row.addWidget(self._dest_path_label, stretch=1)
-
-        self._change_dest_btn = AnimatedButton("Change")
-        self._change_dest_btn.setFixedHeight(28)
-        self._change_dest_btn.setBorderRadius(8)
-        self._animated_widgets.append(self._change_dest_btn)
-        row.addWidget(self._change_dest_btn)
+        # Smaller than the old full-width pill, so it leans harder on the
+        # accent fill and generous padding to stay the obvious primary
+        # action next to a control of similar height.
+        self._download_btn = AnimatedButton("Download", primary=True)
+        self._download_btn.setObjectName("downloadButton")
+        self._download_btn.setBorderRadius(20)
+        self._download_btn.setFixedHeight(40)
+        self._download_btn.setMinimumWidth(150)
+        self._animated_widgets.append(self._download_btn)
+        row.addWidget(self._download_btn)
 
         wrapper = QHBoxLayout()
         wrapper.addWidget(self._dest_widget)
         return wrapper
-
-    def _build_progress_section(self) -> QVBoxLayout:
-        layout = QVBoxLayout()
-        layout.setSpacing(theme.SPACE_SM)
-
-        self._progress_bar = AnimatedProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._animated_widgets.append(self._progress_bar)
-        layout.addWidget(self._progress_bar)
-
-        self._progress_status_label = QLabel("")
-        self._progress_status_label.setProperty("role", "status")
-        self._progress_status_label.setAlignment(Qt.AlignHCenter)
-        layout.addWidget(self._progress_status_label)
-
-        self._download_btn = AnimatedButton("Download", primary=True)
-        self._download_btn.setObjectName("downloadButton")
-        self._download_btn.setBorderRadius(22)
-        self._download_btn.setFixedHeight(44)
-        self._animated_widgets.append(self._download_btn)
-        layout.addWidget(self._download_btn)
-
-        return layout
 
     # ------------------------------------------------------------------
     # Wiring
@@ -434,7 +436,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self._fetch_btn.clicked.connect(self._on_fetch_clicked)
         self._url_edit.returnPressed.connect(self._on_fetch_clicked)
-        self._change_dest_btn.clicked.connect(self._on_change_destination)
+        self._dest_button.clicked.connect(self._on_change_destination)
         self._download_btn.clicked.connect(self._on_download_clicked)
         self._mode_control.selectionChanged.connect(lambda *_: self._on_mode_changed())
         self._history_btn.clicked.connect(self._on_show_history)
@@ -714,7 +716,7 @@ class MainWindow(QMainWindow):
         )
         if chosen:
             self._output_dir = Path(chosen)
-            self._dest_path_label.setText(str(self._output_dir))
+            self._dest_button.setPath(str(self._output_dir))
 
     # ------------------------------------------------------------------
     # Download
@@ -796,8 +798,7 @@ class MainWindow(QMainWindow):
         self._download_btn.setEnabled(False)
         self._download_btn.setText("Downloading…")
         self._progress_bar.setValue(0)
-        _set_role(self._progress_status_label, "status")
-        self._progress_status_label.setText("Starting…")
+        self._show_progress_status("Starting…", "status")
 
         self._download_worker = DownloadWorker(options, self)
         self._download_worker.progress.connect(self._on_download_progress)
@@ -815,25 +816,30 @@ class MainWindow(QMainWindow):
         # reference before the underlying QThread is actually deleted.
         self._download_worker = None
 
+    def _show_progress_status(self, text: str, role: str) -> None:
+        """The status line sits inside the media card now, so it hides
+        itself when empty rather than reserving a blank row in the card."""
+        self._progress_status_label.setText(text)
+        _set_role(self._progress_status_label, role)
+        self._progress_status_label.setVisible(bool(text))
+
     def _on_download_progress(self, pct: float, text: str) -> None:
         self._progress_bar.setValue(int(pct))
-        self._progress_status_label.setText(text)
+        self._show_progress_status(text, "status")
 
     def _on_download_succeeded(self, message: str) -> None:
         self._progress_bar.setValue(100)
-        self._progress_status_label.setText(message)
         # This message is also the DownloadWorker-side fallback for the
         # same "already downloaded" case _already_downloaded_path() checks
         # before starting -- if that offline prediction missed something
         # and yt-dlp skipped the file anyway, it shouldn't read as a
         # fresh, successful save (green) the way an actual download does.
         role = "statusWarning" if message.startswith("Already downloaded") else "statusSuccess"
-        _set_role(self._progress_status_label, role)
+        self._show_progress_status(message, role)
         self._record_history_entry()
 
     def _on_download_failed(self, message: str) -> None:
-        self._progress_status_label.setText(message)
-        _set_role(self._progress_status_label, "statusError")
+        self._show_progress_status(message, "statusError")
 
     # ------------------------------------------------------------------
     # History

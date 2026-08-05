@@ -556,11 +556,13 @@ class AnimatedProgressBar(QProgressBar):
     during a download read as motion rather than a flicker."""
 
     HEIGHT = 10
+    FLUSH_HEIGHT = 5
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._colors: ColorTokens | None = None
         self._display_value = float(self.value())
+        self._flush = False
         self.setTextVisible(False)
         self.setFixedHeight(self.HEIGHT)
 
@@ -572,6 +574,25 @@ class AnimatedProgressBar(QProgressBar):
 
     def apply_theme(self, c: ColorTokens) -> None:
         self._colors = c
+        self.update()
+
+    def setFlush(self, flush: bool) -> None:  # noqa: N802 (Qt naming)
+        """Square off the ends and slim the track, for when the bar spans
+        another element edge-to-edge rather than floating as a standalone
+        pill -- in the poster layout it sits directly beneath the thumbnail
+        band, where pill ends would read as a detached control instead of a
+        scrubber belonging to the artwork above it."""
+        self._flush = flush
+        # The objectName is what lets theme.py's QProgressBar#flushProgressBar
+        # rule reach this instance. It is not cosmetic: the generic
+        # QProgressBar rule pins min-height AND max-height, and QSS wins over
+        # setFixedHeight(), so without a matching stylesheet override the bar
+        # would keep rendering at the standalone-pill height no matter what
+        # this method set. Repolish so the new rule applies immediately.
+        self.setObjectName("flushProgressBar" if flush else "")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.setFixedHeight(self.FLUSH_HEIGHT if flush else self.HEIGHT)
         self.update()
 
     def _get_display_value(self) -> float:
@@ -599,7 +620,7 @@ class AnimatedProgressBar(QProgressBar):
         p.setRenderHint(QPainter.Antialiasing)
 
         rect = QRectF(self.rect())
-        radius = rect.height() / 2
+        radius = 0.0 if self._flush else rect.height() / 2
 
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(c.SURFACE_ALT))
@@ -1246,6 +1267,160 @@ class PosterThumbnail(QLabel):
         # Top corners only: the title block below paints the matching bottom
         # corners, so the two together read as a single rounded card.
         self.setPixmap(rounded_pixmap(pixmap, self._radius, top=True, bottom=False))
+
+
+class DestinationButton(QAbstractButton):
+    """The save-to path as a single clickable control: folder glyph plus
+    the middle-elided path.
+
+    This replaces the old icon + label + separate "Change" button trio.
+    Making the path itself the affordance is what freed the Change
+    button's slot for Download -- and it removes the oddity of a
+    permanently-disabled decorative icon sitting next to a live button
+    that did the same job the icon appeared to describe.
+    """
+
+    ICON_BOX = 18.0
+    PAD = 12.0
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._colors: ColorTokens | None = None
+        self._path = ""
+        self._hover_t = 0.0
+        self._press_t = 0.0
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(40)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setToolTip("Change download folder")
+
+        self._hover_anim = QPropertyAnimation(self, b"hoverProgress", self)
+        self._hover_anim.setDuration(HOVER_MS)
+        self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._press_anim = QPropertyAnimation(self, b"pressProgress", self)
+        self._press_anim.setDuration(PRESS_MS)
+        self._press_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    def apply_theme(self, c: ColorTokens) -> None:
+        self._colors = c
+        self.update()
+
+    def setPath(self, path: str) -> None:  # noqa: N802 (Qt naming)
+        self._path = path
+        self.setToolTip(f"{path}\n\nClick to change download folder")
+        self.update()
+
+    def path(self) -> str:
+        return self._path
+
+    def _get_hover(self) -> float:
+        return self._hover_t
+
+    def _set_hover(self, value: float) -> None:
+        self._hover_t = value
+        self.update()
+
+    hoverProgress = Property(float, _get_hover, _set_hover)
+
+    def _get_press(self) -> float:
+        return self._press_t
+
+    def _set_press(self, value: float) -> None:
+        self._press_t = value
+        self.update()
+
+    pressProgress = Property(float, _get_press, _set_press)
+
+    def _run(self, anim: QPropertyAnimation, current: float, target: float) -> None:
+        anim.stop()
+        anim.setStartValue(current)
+        anim.setEndValue(target)
+        anim.start()
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        if self.isEnabled():
+            self._run(self._hover_anim, self._hover_t, 1.0)
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self._run(self._hover_anim, self._hover_t, 0.0)
+
+    def mousePressEvent(self, event) -> None:
+        super().mousePressEvent(event)
+        if self.isEnabled() and event.button() == Qt.LeftButton:
+            self._run(self._press_anim, self._press_t, 1.0)
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        self._run(self._press_anim, self._press_t, 0.0)
+
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802 (Qt override)
+        super().setEnabled(enabled)
+        if not enabled:
+            self._hover_anim.stop()
+            self._press_anim.stop()
+            self._hover_t = 0.0
+            self._press_t = 0.0
+            self.update()
+
+    def sizeHint(self) -> QSize:
+        return QSize(260, 40)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        # Small on purpose: the path is elided, so this control can be
+        # squeezed hard without losing anything, and pinning it to the
+        # full path width would let a deep folder drag the window wider.
+        return QSize(120, 40)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        c = self._colors
+        if c is None:
+            return
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        enabled = self.isEnabled()
+
+        if not enabled:
+            bg = QColor(c.DISABLED_BG)
+            border = QColor(c.DISABLED_BORDER)
+            icon_color = text_color = QColor(c.DISABLED_TEXT)
+        else:
+            lit = max(self._hover_t, self._press_t)
+            bg = _mix(QColor(c.SURFACE_ALT), QColor(c.BORDER), lit)
+            border = _mix(QColor(c.BORDER), QColor(c.ACCENT), self._hover_t)
+            icon_color = _mix(QColor(c.TEXT_MUTED), QColor(c.ACCENT), self._hover_t)
+            text_color = _mix(QColor(c.TEXT_MUTED), QColor(c.TEXT_PRIMARY), self._hover_t)
+
+        p.setPen(QPen(border, 1))
+        p.setBrush(bg)
+        p.drawRoundedRect(rect, 8, 8)
+
+        icon_rect = QRectF(
+            rect.left() + self.PAD,
+            rect.center().y() - self.ICON_BOX / 2,
+            self.ICON_BOX,
+            self.ICON_BOX,
+        )
+        icons.draw_folder(p, icon_rect, icon_color)
+
+        text_left = icon_rect.right() + 8
+        text_rect = QRectF(
+            text_left, rect.top(), rect.right() - self.PAD - text_left, rect.height()
+        )
+        fm = QFontMetrics(self.font())
+        p.setPen(QPen(text_color))
+        p.drawText(
+            text_rect,
+            Qt.AlignVCenter | Qt.AlignLeft,
+            # ElideMiddle, not ElideRight: the tail of a save path (the
+            # actual folder name) is the part worth keeping legible.
+            fm.elidedText(self._path, Qt.ElideMiddle, max(0, int(text_rect.width()))),
+        )
+        p.end()
 
 
 class ElidedLabel(QLabel):
