@@ -18,15 +18,39 @@ def fit_pixmap(pixmap: QPixmap, size: QSize) -> QPixmap:
     return scaled.copy(x, y, size.width(), size.height())
 
 
-def rounded_pixmap(pixmap: QPixmap, radius: int) -> QPixmap:
+def rounded_pixmap(
+    pixmap: QPixmap, radius: int, top: bool = True, bottom: bool = True
+) -> QPixmap:
     """Clip to rounded corners so a thumbnail matches the rest of the
-    app's rounded-corner language instead of sitting in a hard-edged box."""
+    app's rounded-corner language instead of sitting in a hard-edged box.
+
+    ``top``/``bottom`` select which pair of corners actually gets rounded.
+    The poster layout needs top-only: the thumbnail is the upper half of a
+    single rounded media card whose lower half is the title block, so
+    rounding the thumbnail's bottom corners would cut a notch into the
+    middle of that card. Qt does not clip a child widget to its parent's
+    border-radius, so this has to happen on the pixmap itself.
+    """
     result = QPixmap(pixmap.size())
     result.fill(Qt.transparent)
     painter = QPainter(result)
     painter.setRenderHint(QPainter.Antialiasing)
+
+    rect = QRectF(pixmap.rect())
     path = QPainterPath()
-    path.addRoundedRect(QRectF(pixmap.rect()), radius, radius)
+    path.addRoundedRect(rect, radius, radius)
+    # Square off the unwanted end by unioning a plain rect over it.
+    if not top:
+        square = QPainterPath()
+        square.addRect(QRectF(rect.left(), rect.top(), rect.width(), rect.height() / 2))
+        path = path.united(square)
+    if not bottom:
+        square = QPainterPath()
+        square.addRect(
+            QRectF(rect.left(), rect.center().y(), rect.width(), rect.height() / 2)
+        )
+        path = path.united(square)
+
     painter.setClipPath(path)
     painter.drawPixmap(0, 0, pixmap)
     painter.end()

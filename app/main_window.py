@@ -11,19 +11,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QSize, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QButtonGroup,
-    QComboBox,
     QFileDialog,
     QFrame,
     QGraphicsOpacityEffect,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -33,14 +31,17 @@ from PySide6.QtWidgets import (
 from app import binaries, theme
 from app.history import HistoryStore
 from app.history_view import HistoryPage
-from app.imaging import fit_pixmap, rounded_pixmap
 from app.splash import SplashOverlay
 from app.theme_manager import ThemeManager
 from app.widgets import (
     AnimatedButton,
     AnimatedCheckBox,
+    AnimatedComboBox,
     AnimatedProgressBar,
-    AnimatedRadioButton,
+    AnimatedSegmentedControl,
+    ElidedLabel,
+    IconButton,
+    PosterThumbnail,
 )
 from app.workers import (
     MODE_AUDIO_ONLY,
@@ -50,7 +51,11 @@ from app.workers import (
     DownloadWorker,
     FetchWorker,
     VideoInfo,
+    estimate_download_size,
+    format_duration,
+    format_filesize,
     predict_output_path,
+    selected_height,
 )
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -72,10 +77,9 @@ def _card() -> QFrame:
 
 
 class MainWindow(QMainWindow):
-    # 16:9, the standard YouTube thumbnail aspect ratio -- large enough to
-    # actually recognize the video at a glance, small enough to stay a
-    # secondary element next to the title rather than dominating the card.
-    THUMBNAIL_SIZE = QSize(120, 68)
+    # The thumbnail is no longer a fixed-size inline element: it is a
+    # full-bleed 16:9 band whose pixel size is derived from the card's
+    # current width every time that width changes (_rescale_poster_thumb).
 
     def __init__(self, theme_manager: ThemeManager) -> None:
         super().__init__()
@@ -158,27 +162,40 @@ class MainWindow(QMainWindow):
         self._stack.setObjectName("centralWidget")
         self.setCentralWidget(self._stack)
 
-        download_page = QWidget()
-        self._outer_layout = outer = QVBoxLayout(download_page)
+        # The poster layout needs roughly 850px of height once everything is
+        # revealed, which is taller than the usable area on a 768px-tall
+        # laptop screen. A scroll area means that case degrades to a
+        # scrollbar instead of Qt compressing cards below their minimum size
+        # and clipping their contents.
+        self._page_scroll = QScrollArea()
+        self._page_scroll.setWidgetResizable(True)
+        self._page_scroll.setFrameShape(QFrame.NoFrame)
+        self._page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        self._page_content = QWidget()
+        self._outer_layout = outer = QVBoxLayout(self._page_content)
         outer.setContentsMargins(
             theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG, theme.SPACE_LG
         )
-        outer.setSpacing(theme.SPACE_LG)
-
-        outer.addLayout(self._build_header_row())
+        outer.setSpacing(theme.SPACE_MD)
 
         # Spacer that gets animated to zero on first successful fetch,
-        # which is what produces the "docks to the top" motion. Given an
-        # explicit stretch factor (matching the trailing addStretch below)
-        # so the two split any pre-fetch leftover height evenly, the way
-        # two plain Expanding widgets used to.
+        # which is what produces the "docks to the top" motion. It sits
+        # ABOVE the URL row on purpose: that is what leaves the URL field
+        # sitting in the middle of an otherwise empty window before the
+        # first fetch, then lifts it to the top as the rest appears.
+        # Given an explicit stretch factor (matching the trailing
+        # addStretch below) so the two split any pre-fetch leftover height
+        # evenly, the way two plain Expanding widgets used to.
         self._top_spacer = QWidget()
         self._top_spacer.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         outer.addWidget(self._top_spacer, 1)
 
-        outer.addWidget(self._build_hero_card())
-        outer.addWidget(self._build_options_card())
-        outer.addWidget(self._build_destination_card())
+        outer.addLayout(self._build_url_row())
+        outer.addWidget(self._status_label)
+        outer.addWidget(self._build_media_card())
+        outer.addWidget(self._build_controls_card())
+        outer.addLayout(self._build_destination_row())
         outer.addLayout(self._build_progress_section())
 
         # A trailing stretch, not a second collapsible spacer widget: it
@@ -196,152 +213,155 @@ class MainWindow(QMainWindow):
         # than where it belongs, trailing after the button.
         outer.addStretch(1)
 
+        self._page_scroll.setWidget(self._page_content)
+
         # Hidden until a successful fetch.
-        self._options_card.setVisible(False)
-        self._destination_card.setVisible(False)
-        self._progress_bar.setVisible(False)
-        self._progress_status_label.setVisible(False)
-        self._download_btn.setVisible(False)
+        for widget in self._revealable():
+            widget.setVisible(False)
 
         self._history = HistoryStore()
         self._history_page = HistoryPage(self._history, self._theme_manager.colors(), self)
         self._history_page.back_requested.connect(lambda: self._stack.setCurrentIndex(0))
         self._history_page.redownload_requested.connect(self._on_history_redownload)
 
-        self._stack.addWidget(download_page)      # index 0
+        self._stack.addWidget(self._page_scroll)   # index 0
         self._stack.addWidget(self._history_page)  # index 1
         self._stack.setCurrentIndex(0)
 
-    def _build_header_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.addStretch(1)
-        self._history_btn = AnimatedButton("History")
-        self._history_btn.setFixedHeight(32)
-        self._history_btn.setBorderRadius(16)
-        self._animated_widgets.append(self._history_btn)
-        row.addWidget(self._history_btn)
-        return row
+    def _revealable(self) -> list[QWidget]:
+        """Everything that stays hidden until the first successful fetch."""
+        return [
+            self._media_card,
+            self._controls_card,
+            self._dest_widget,
+            self._progress_bar,
+            self._progress_status_label,
+            self._download_btn,
+        ]
 
-    def _build_hero_card(self) -> QFrame:
-        card = _card()
-        self._hero_card = card
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(
-            theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD
-        )
-        layout.setSpacing(theme.SPACE_SM)
+    # -- top row: paste a link -------------------------------------------
 
+    def _build_url_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(theme.SPACE_SM)
+
         self._url_edit = QLineEdit()
         self._url_edit.setPlaceholderText("Paste a YouTube link…")
-        self._url_edit.setMinimumHeight(36)
+        self._url_edit.setMinimumHeight(38)
         row.addWidget(self._url_edit, stretch=1)
 
-        self._fetch_btn = AnimatedButton("Fetch Info", primary=True)
-        self._fetch_btn.setObjectName("fetchButton")
-        self._fetch_btn.setBorderRadius(18)
-        self._fetch_btn.setFixedHeight(36)
+        # Icon buttons rather than text: at this width a "Fetch Info" pill
+        # plus a "History" pill together take about a third of the row away
+        # from the field they sit next to. The fetch button carries the
+        # loading state that used to be the button's own "Fetching…" label
+        # (see IconButton.setBusy).
+        self._fetch_btn = IconButton("arrow", primary=True, diameter=38)
+        self._fetch_btn.setToolTip("Fetch video info")
         self._animated_widgets.append(self._fetch_btn)
         row.addWidget(self._fetch_btn)
-        layout.addLayout(row)
 
-        # Thumbnail + title side by side, not title alone: the whole point
-        # is letting someone glance at this and instantly recognize *that
-        # specific video*, the way a title alone (especially a long or
-        # generic one) doesn't reliably do.
-        video_row = QHBoxLayout()
-        video_row.setSpacing(theme.SPACE_SM)
-
-        self._thumbnail_label = QLabel()
-        self._thumbnail_label.setObjectName("thumbnailLabel")
-        self._thumbnail_label.setFixedSize(self.THUMBNAIL_SIZE)
-        self._thumbnail_label.setAlignment(Qt.AlignCenter)
-        self._thumbnail_label.setVisible(False)
-        video_row.addWidget(self._thumbnail_label)
-
-        self._video_title_label = QLabel("")
-        self._video_title_label.setProperty("role", "videoTitle")
-        self._video_title_label.setWordWrap(True)
-        self._video_title_label.setVisible(False)
-        video_row.addWidget(self._video_title_label, stretch=1)
-
-        layout.addLayout(video_row)
+        self._history_btn = IconButton("clock", diameter=38)
+        self._history_btn.setToolTip("Download history")
+        self._animated_widgets.append(self._history_btn)
+        row.addWidget(self._history_btn)
 
         self._status_label = QLabel("")
         self._status_label.setProperty("role", "status")
         self._status_label.setWordWrap(True)
         self._status_label.setVisible(False)
-        layout.addWidget(self._status_label)
+        return row
 
+    # -- media card: thumbnail band + title block, one rounded object ------
+
+    def _build_media_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("mediaCard")
+        self._media_card = card
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Full-bleed 16:9 band that keeps its own aspect ratio and re-renders
+        # itself whenever its width changes (see PosterThumbnail).
+        self._thumbnail_label = PosterThumbnail(theme.RADIUS_CARD)
+        self._thumbnail_label.setObjectName("posterThumb")
+        layout.addWidget(self._thumbnail_label)
+
+        meta = QWidget()
+        meta.setObjectName("posterMeta")
+        self._poster_meta = meta
+        meta_layout = QVBoxLayout(meta)
+        meta_layout.setContentsMargins(
+            theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD
+        )
+        meta_layout.setSpacing(theme.SPACE_SM)
+
+        self._video_title_label = QLabel("")
+        self._video_title_label.setProperty("role", "posterTitle")
+        self._video_title_label.setWordWrap(True)
+        meta_layout.addWidget(self._video_title_label)
+
+        self._chip_row = QHBoxLayout()
+        self._chip_row.setSpacing(theme.SPACE_XS + 2)
+        self._chip_row.addStretch(1)
+        meta_layout.addLayout(self._chip_row)
+
+        layout.addWidget(meta)
         return card
 
-    def _build_options_card(self) -> QFrame:
+    # -- controls ---------------------------------------------------------
+
+    def _build_controls_card(self) -> QFrame:
         card = _card()
-        self._options_card = card
+        self._controls_card = card
         layout = QVBoxLayout(card)
         layout.setContentsMargins(
             theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD
         )
         layout.setSpacing(theme.SPACE_MD)
 
-        mode_label = QLabel("MODE")
-        mode_label.setProperty("role", "sectionLabel")
-        layout.addWidget(mode_label)
+        # One segmented control instead of three radios: the three modes are
+        # mutually exclusive and short-labelled, which is exactly what a
+        # segmented control is for, and it collapses three stacked rows into
+        # one -- the single biggest space saving in this layout.
+        self._mode_control = AnimatedSegmentedControl(
+            ["Video + sound", "Video only", "Audio only"]
+        )
+        self._animated_widgets.append(self._mode_control)
+        layout.addWidget(self._mode_control)
 
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(theme.SPACE_MD)
-        self._mode_group = QButtonGroup(self)
-        self._radio_video = AnimatedRadioButton("Video (with sound)")
-        self._radio_video_only = AnimatedRadioButton("Video only (no sound)")
-        self._radio_audio_only = AnimatedRadioButton("Audio only")
-        self._radio_video.setChecked(True)
-        for i, rb in enumerate(
-            (self._radio_video, self._radio_video_only, self._radio_audio_only)
-        ):
-            self._mode_group.addButton(rb, i)
-            self._animated_widgets.append(rb)
-            mode_row.addWidget(rb)
-        mode_row.addStretch(1)
-        layout.addLayout(mode_row)
+        quality_row = QHBoxLayout()
+        quality_row.setSpacing(theme.SPACE_MD)
 
-        # A grid rather than a nested HBox-of-VBoxes: with two stacked
-        # (label + combo) columns side by side, the nested-VBoxes-in-an-
-        # HBox version under-reported its own height to the outer layout
-        # (the combo boxes' allocated rects overran into the next row).
-        # QGridLayout sizes each row from the tallest cell in it, which
-        # sidesteps that entirely.
-        quality_grid = QGridLayout()
-        quality_grid.setHorizontalSpacing(theme.SPACE_MD)
-        quality_grid.setVerticalSpacing(theme.SPACE_XS)
-        quality_grid.setColumnStretch(0, 1)
-        quality_grid.setColumnStretch(1, 1)
-
-        quality_label = QLabel("VIDEO QUALITY")
+        quality_col = QVBoxLayout()
+        quality_col.setSpacing(theme.SPACE_XS)
+        quality_label = QLabel("QUALITY")
         quality_label.setProperty("role", "sectionLabel")
-        quality_grid.addWidget(quality_label, 0, 0)
-        self._quality_combo = QComboBox()
-        self._quality_combo.setMinimumHeight(36)
-        quality_grid.addWidget(self._quality_combo, 1, 0)
+        quality_col.addWidget(quality_label)
+        self._quality_combo = AnimatedComboBox()
+        self._animated_widgets.append(self._quality_combo)
+        quality_col.addWidget(self._quality_combo)
+        quality_row.addLayout(quality_col, stretch=1)
 
+        audio_col = QVBoxLayout()
+        audio_col.setSpacing(theme.SPACE_XS)
         audio_label = QLabel("AUDIO FORMAT")
         audio_label.setProperty("role", "sectionLabel")
-        quality_grid.addWidget(audio_label, 0, 1)
-        self._audio_format_combo = QComboBox()
-        self._audio_format_combo.setMinimumHeight(36)
+        audio_col.addWidget(audio_label)
+        self._audio_format_combo = AnimatedComboBox()
         self._audio_format_combo.addItems(["MP3", "M4A", "WAV"])
-        quality_grid.addWidget(self._audio_format_combo, 1, 1)
+        self._animated_widgets.append(self._audio_format_combo)
+        audio_col.addWidget(self._audio_format_combo)
+        quality_row.addLayout(audio_col, stretch=1)
 
-        layout.addLayout(quality_grid)
-
-        extras_label = QLabel("EXTRAS")
-        extras_label.setProperty("role", "sectionLabel")
-        layout.addWidget(extras_label)
+        layout.addLayout(quality_row)
 
         extras_row = QHBoxLayout()
-        extras_row.setSpacing(theme.SPACE_MD)
-        self._subtitles_checkbox = AnimatedCheckBox("Include subtitles (if available)")
-        self._thumbnail_checkbox = AnimatedCheckBox("Embed thumbnail as cover art")
+        extras_row.setSpacing(theme.SPACE_LG)
+        self._subtitles_checkbox = AnimatedCheckBox("Subtitles")
+        self._subtitles_checkbox.setToolTip("Include English subtitles, if the video has them")
+        self._thumbnail_checkbox = AnimatedCheckBox("Embed thumbnail")
+        self._thumbnail_checkbox.setToolTip("Embed the thumbnail into the file as cover art")
         self._animated_widgets.append(self._subtitles_checkbox)
         self._animated_widgets.append(self._thumbnail_checkbox)
         extras_row.addWidget(self._subtitles_checkbox)
@@ -351,31 +371,36 @@ class MainWindow(QMainWindow):
 
         return card
 
-    def _build_destination_card(self) -> QFrame:
-        card = _card()
-        self._destination_card = card
-        layout = QHBoxLayout(card)
-        layout.setContentsMargins(
-            theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD, theme.SPACE_MD
-        )
-        layout.setSpacing(theme.SPACE_MD)
+    # -- destination: one line, not a card --------------------------------
 
-        col = QVBoxLayout()
-        col.setSpacing(theme.SPACE_XS)
-        label = QLabel("SAVE TO")
-        label.setProperty("role", "sectionLabel")
-        col.addWidget(label)
-        self._dest_path_label = QLabel(str(self._output_dir))
+    def _build_destination_row(self) -> QHBoxLayout:
+        # A whole bordered card for one read-only path was the emptiest
+        # block in the old layout; as a single line with a folder icon it
+        # says the same thing in a quarter of the height.
+        self._dest_widget = QWidget()
+        row = QHBoxLayout(self._dest_widget)
+        row.setContentsMargins(theme.SPACE_XS, 0, 0, 0)
+        row.setSpacing(theme.SPACE_SM)
+
+        self._dest_icon = IconButton("folder", diameter=22)
+        self._dest_icon.setEnabled(False)
+        self._dest_icon.setToolTip("Where downloads are saved")
+        self._animated_widgets.append(self._dest_icon)
+        row.addWidget(self._dest_icon)
+
+        self._dest_path_label = ElidedLabel(str(self._output_dir))
         self._dest_path_label.setProperty("role", "path")
-        col.addWidget(self._dest_path_label)
-        layout.addLayout(col, stretch=1)
+        row.addWidget(self._dest_path_label, stretch=1)
 
-        self._change_dest_btn = AnimatedButton("Change…")
-        self._change_dest_btn.setFixedHeight(36)
+        self._change_dest_btn = AnimatedButton("Change")
+        self._change_dest_btn.setFixedHeight(28)
+        self._change_dest_btn.setBorderRadius(8)
         self._animated_widgets.append(self._change_dest_btn)
-        layout.addWidget(self._change_dest_btn, alignment=Qt.AlignVCenter)
+        row.addWidget(self._change_dest_btn)
 
-        return card
+        wrapper = QHBoxLayout()
+        wrapper.addWidget(self._dest_widget)
+        return wrapper
 
     def _build_progress_section(self) -> QVBoxLayout:
         layout = QVBoxLayout()
@@ -410,8 +435,11 @@ class MainWindow(QMainWindow):
         self._url_edit.returnPressed.connect(self._on_fetch_clicked)
         self._change_dest_btn.clicked.connect(self._on_change_destination)
         self._download_btn.clicked.connect(self._on_download_clicked)
-        self._mode_group.buttonToggled.connect(lambda *_: self._on_mode_changed())
+        self._mode_control.selectionChanged.connect(lambda *_: self._on_mode_changed())
         self._history_btn.clicked.connect(self._on_show_history)
+        # The resolution and size chips describe the *selected* quality, so
+        # they have to be recomputed whenever that selection moves.
+        self._quality_combo.currentIndexChanged.connect(lambda *_: self._refresh_chips())
 
     def _apply_control_theme(self) -> None:
         c = self._theme_manager.colors()
@@ -433,17 +461,65 @@ class MainWindow(QMainWindow):
     # Mode / quality interplay
     # ------------------------------------------------------------------
 
+    # Segment order must match the labels passed to AnimatedSegmentedControl.
+    _MODES = (MODE_VIDEO, MODE_VIDEO_ONLY, MODE_AUDIO_ONLY)
+
     def _current_mode(self) -> str:
-        if self._radio_video_only.isChecked():
-            return MODE_VIDEO_ONLY
-        if self._radio_audio_only.isChecked():
-            return MODE_AUDIO_ONLY
-        return MODE_VIDEO
+        return self._MODES[self._mode_control.currentIndex()]
 
     def _on_mode_changed(self) -> None:
         is_audio_only = self._current_mode() == MODE_AUDIO_ONLY
         self._quality_combo.setEnabled(not is_audio_only)
         self._audio_format_combo.setEnabled(is_audio_only)
+        # Switching between video and audio changes what would actually be
+        # downloaded, so the size chip has to follow.
+        self._refresh_chips()
+
+    # ------------------------------------------------------------------
+    # Info chips (duration / resolution / size)
+    # ------------------------------------------------------------------
+
+    def _clear_chips(self) -> None:
+        while self._chip_row.count() > 1:  # keep the trailing stretch
+            item = self._chip_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _refresh_chips(self) -> None:
+        """Rebuild the facts shown under the title. Resolution and size
+        describe the *currently selected* quality rather than the video's
+        maximum, so they stay truthful as the dropdown changes."""
+        self._clear_chips()
+        info = self._video_info
+        if info is None:
+            return
+
+        mode = self._current_mode()
+        height = self._quality_combo.currentData()
+        values: list[str] = []
+
+        duration = format_duration(info.raw)
+        if duration:
+            values.append(duration)
+
+        if mode != MODE_AUDIO_ONLY:
+            resolved = selected_height(info.raw, height)
+            if resolved:
+                values.append(f"{resolved}p")
+        else:
+            values.append(self._audio_format_combo.currentText())
+
+        size = format_filesize(estimate_download_size(info.raw, mode, height))
+        if size:
+            # "~" because this is assembled from per-format estimates and the
+            # muxed result is never exactly the sum of its parts.
+            values.append(f"~{size}")
+
+        for index, text in enumerate(values):
+            chip = QLabel(text)
+            chip.setProperty("role", "chip")
+            self._chip_row.insertWidget(index, chip)
 
     # ------------------------------------------------------------------
     # Fetch
@@ -467,10 +543,8 @@ class MainWindow(QMainWindow):
 
         self._fetch_in_progress = True
         self._fetch_btn.setEnabled(False)
-        self._fetch_btn.setText("Fetching…")
+        self._fetch_btn.setBusy(True)
         self._show_hero_status("Fetching video info…", "status")
-        self._video_title_label.setVisible(False)
-        self._thumbnail_label.setVisible(False)
 
         self._fetch_worker = FetchWorker(url, self)
         self._fetch_worker.succeeded.connect(self._on_fetch_succeeded)
@@ -480,8 +554,8 @@ class MainWindow(QMainWindow):
 
     def _reset_fetch_button(self) -> None:
         self._fetch_in_progress = False
+        self._fetch_btn.setBusy(False)
         self._fetch_btn.setEnabled(True)
-        self._fetch_btn.setText("Fetch Info")
 
     def _show_hero_status(self, text: str, role: str) -> None:
         self._status_label.setText(text)
@@ -489,36 +563,34 @@ class MainWindow(QMainWindow):
         self._status_label.setVisible(bool(text))
 
     def _on_fetch_failed(self, message: str) -> None:
-        self._thumbnail_label.clear()
-        self._thumbnail_label.setVisible(False)
         self._show_hero_status(message, "statusError")
 
     def _on_fetch_succeeded(self, info: VideoInfo) -> None:
         self._video_info = info
         self._video_title_label.setText(info.title)
-        self._video_title_label.setVisible(True)
         self._show_hero_status("", "status")
+        self._rescale_poster_thumb()
 
-        if info.thumbnail is not None and not info.thumbnail.isNull():
-            pixmap = QPixmap.fromImage(info.thumbnail)
-            pixmap = fit_pixmap(pixmap, self.THUMBNAIL_SIZE)
-            pixmap = rounded_pixmap(pixmap, theme.RADIUS_CONTROL)
-            self._thumbnail_label.setPixmap(pixmap)
-            self._thumbnail_label.setVisible(True)
-        else:
-            # Never fatal -- a slow/unreachable thumbnail host shouldn't
-            # block using the app, it just falls back to title-only, the
-            # same as before this feature existed.
-            self._thumbnail_label.clear()
-            self._thumbnail_label.setVisible(False)
-
+        self._quality_combo.blockSignals(True)
         self._quality_combo.clear()
         self._quality_combo.addItem("Best available", None)
         for h in info.heights:
             self._quality_combo.addItem(f"{h}p", h)
         self._quality_combo.setCurrentIndex(0)
+        self._quality_combo.blockSignals(False)
 
+        self._refresh_chips()
         self._reveal_rest_of_ui()
+
+    # ------------------------------------------------------------------
+    # Poster thumbnail
+    # ------------------------------------------------------------------
+
+    def _rescale_poster_thumb(self) -> None:
+        """Hand the fetched artwork to the band, which handles its own
+        scaling, aspect ratio and corner rounding from there."""
+        info = self._video_info
+        self._thumbnail_label.setImage(info.thumbnail if info else None)
 
     # ------------------------------------------------------------------
     # Reveal animation
@@ -534,7 +606,7 @@ class MainWindow(QMainWindow):
         self._outer_layout.activate()
 
     def _reveal_rest_of_ui(self) -> None:
-        if self._options_card.isVisible():
+        if self._controls_card.isVisible():
             return  # already revealed, e.g. fetching a second link
 
         # 1) Collapse the top docking spacer from its current height to 0
@@ -561,13 +633,7 @@ class MainWindow(QMainWindow):
             self._retire_spacer(self._top_spacer)
 
         # 2) Reveal the rest of the UI with a fade-in.
-        for widget in (
-            self._options_card,
-            self._destination_card,
-            self._progress_bar,
-            self._progress_status_label,
-            self._download_btn,
-        ):
+        for widget in self._revealable():
             widget.setVisible(True)
 
         # Force the *central widget's* outer layout (not self.layout(),
@@ -591,24 +657,34 @@ class MainWindow(QMainWindow):
         # layout had no choice but to compress the radios below the width
         # their text needs. Grow both, each capped so it never overruns
         # the screen.
-        needed = self.sizeHint()
+        # sizeHint() is taken from the scrolled *content* widget, not from
+        # the window: a QScrollArea reports only the size it would like its
+        # viewport to be, so asking the window would size it to the
+        # scrollbar rather than to the content and leave everything
+        # permanently scrolled.
+        needed = self._page_content.sizeHint()
+        chrome_h = self.height() - self._page_scroll.viewport().height()
+        chrome_w = self.width() - self._page_scroll.viewport().width()
         screen = self.screen()
         cap_h = int(screen.availableGeometry().height() * 0.9) if screen else 900
         cap_w = int(screen.availableGeometry().width() * 0.9) if screen else 1200
-        target_height = min(needed.height(), cap_h)
-        target_width = min(needed.width(), cap_w)
+        target_height = min(needed.height() + chrome_h, cap_h)
+        # Width grows only to what the content genuinely *requires*, not to
+        # what it would prefer. Height has no such choice -- nothing here can
+        # shorten itself, so the window must fit it or scroll. Width is
+        # different now that the segmented control and the save path both
+        # elide: chasing the preferred width would let a machine whose font
+        # renders the mode labels wider than expected balloon the window far
+        # past the size this layout was composed at.
+        target_width = min(
+            self._page_content.minimumSizeHint().width() + chrome_w, cap_w
+        )
         new_width = max(self.width(), target_width)
         new_height = max(self.height(), target_height)
         if new_width != self.width() or new_height != self.height():
             self.resize(new_width, new_height)
 
-        for widget in (
-            self._options_card,
-            self._destination_card,
-            self._progress_bar,
-            self._progress_status_label,
-            self._download_btn,
-        ):
+        for widget in self._revealable():
             effect = QGraphicsOpacityEffect(widget)
             effect.setOpacity(0.0)
             widget.setGraphicsEffect(effect)

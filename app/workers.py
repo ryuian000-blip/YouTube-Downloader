@@ -110,6 +110,108 @@ MODE_VIDEO_ONLY = "video_only"
 MODE_AUDIO_ONLY = "audio_only"
 
 
+# ---------------------------------------------------------------------------
+# Info-chip helpers (duration / resolution / size shown next to the title)
+# ---------------------------------------------------------------------------
+
+def format_duration(info: dict) -> str | None:
+    """yt-dlp usually hands back a ready-made ``duration_string``; the
+    manual path is the fallback for videos that only carry raw seconds."""
+    text = info.get("duration_string")
+    if text:
+        return str(text)
+    seconds = info.get("duration")
+    if not isinstance(seconds, (int, float)) or seconds <= 0:
+        return None
+    seconds = int(seconds)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def format_filesize(num_bytes: float | None) -> str | None:
+    if not num_bytes or num_bytes <= 0:
+        return None
+    units = ("B", "KB", "MB", "GB")
+    value = float(num_bytes)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.0f} {unit}" if unit != "GB" else f"{value:.1f} {unit}"
+        value /= 1024
+    return None
+
+
+def _stream_size(fmt: dict) -> float:
+    """Exact size if yt-dlp knows it, else its estimate, else derive one
+    from bitrate x duration (which is all that's available for some
+    adaptive formats)."""
+    for key in ("filesize", "filesize_approx"):
+        value = fmt.get(key)
+        if value:
+            return float(value)
+    tbr, duration = fmt.get("tbr"), fmt.get("duration")
+    if tbr and duration:
+        return float(tbr) * 125.0 * float(duration)  # kbit/s -> bytes/s
+    return 0.0
+
+
+def estimate_download_size(raw_info: dict, mode: str, height: int | None) -> float | None:
+    """Approximate byte size of what *this app* would actually fetch for the
+    given mode/quality.
+
+    Deliberately not ``raw_info["filesize_approx"]``: that describes
+    yt-dlp's own default format pick, which is not the format string this
+    app builds (see DownloadWorker._format_string) -- on a 4K video the two
+    can differ by well over 100MB, so showing the top-level number next to
+    a 1080p selection would be plainly wrong. Returns None rather than a
+    guess when there is nothing solid to compute from.
+    """
+    formats = raw_info.get("formats") or []
+    if not formats:
+        return None
+    duration = raw_info.get("duration")
+    for fmt in formats:
+        fmt.setdefault("duration", duration)
+
+    audio_streams = [
+        f for f in formats
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
+    ]
+    video_streams = [
+        f for f in formats
+        if f.get("vcodec") not in (None, "none") and f.get("height")
+    ]
+    if height is not None:
+        video_streams = [f for f in video_streams if f.get("height") <= height]
+
+    total = 0.0
+    if mode in (MODE_VIDEO, MODE_VIDEO_ONLY) and video_streams:
+        best_height = max(f["height"] for f in video_streams)
+        tier = [f for f in video_streams if f["height"] == best_height]
+        total += max((_stream_size(f) for f in tier), default=0.0)
+    if mode in (MODE_VIDEO, MODE_AUDIO_ONLY) and audio_streams:
+        total += max((_stream_size(f) for f in audio_streams), default=0.0)
+
+    return total or None
+
+
+def selected_height(raw_info: dict, height: int | None) -> int | None:
+    """The height actually delivered for a quality choice -- ``None`` means
+    "Best available", which resolves to the tallest format on offer."""
+    heights = [
+        f.get("height") for f in (raw_info.get("formats") or [])
+        if f.get("height") and f.get("vcodec") not in (None, "none")
+    ]
+    if not heights:
+        return None
+    if height is None:
+        return max(heights)
+    eligible = [h for h in heights if h <= height]
+    return max(eligible) if eligible else None
+
+
 def predict_output_path(raw_info: dict, output_dir: Path, mode: str, audio_format: str) -> Path:
     """Best-effort prediction of where a download would land, using
     yt-dlp's own filename templating against the info dict FetchWorker

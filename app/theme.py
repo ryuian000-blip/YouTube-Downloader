@@ -103,6 +103,11 @@ SIZE_SECTION_LABEL = 12
 SIZE_BODY = 13
 SIZE_BUTTON = 13
 SIZE_STATUS = 12
+# The poster layout gives the fetched video its own band, so its title is
+# the largest thing on screen after the window title -- big enough to read
+# as a heading, still short of SIZE_TITLE so it can't compete with it.
+SIZE_POSTER_TITLE = 16
+SIZE_CHIP = 11
 
 
 def build_stylesheet(c: ColorTokens) -> str:
@@ -237,6 +242,50 @@ def build_stylesheet(c: ColorTokens) -> str:
     }}
 
     /* -------------------------------------------------------------- */
+    /* Media card (poster layout)                                       */
+    /* -------------------------------------------------------------- */
+    /* The thumbnail band and the title block below it are one rounded
+       object. Qt does NOT clip a child widget to its parent's
+       border-radius, so the card itself carries no background at the top
+       -- the band's pixmap is clipped to rounded TOP corners in code (see
+       imaging.rounded_pixmap's top/bottom flags) and the title block below
+       paints the rounded BOTTOM corners itself. */
+    QFrame#mediaCard {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QLabel#posterThumb {{
+        background-color: {c.SURFACE_ALT};
+        border: none;
+    }}
+
+    QWidget#posterMeta {{
+        background-color: {c.SURFACE};
+        border: 1px solid {c.BORDER};
+        border-top: none;
+        border-bottom-left-radius: {RADIUS_CARD}px;
+        border-bottom-right-radius: {RADIUS_CARD}px;
+    }}
+
+    QLabel[role="posterTitle"] {{
+        font-size: {SIZE_POSTER_TITLE}px;
+        font-weight: 650;
+        color: {c.TEXT_PRIMARY};
+    }}
+
+    /* Duration / resolution / size, next to the title. Monospace digits so
+       the row doesn't jitter as the size estimate changes with quality. */
+    QLabel[role="chip"] {{
+        background-color: {c.SURFACE_ALT};
+        border: 1px solid {c.BORDER};
+        border-radius: 6px;
+        padding: 2px 7px;
+        font-size: {SIZE_CHIP}px;
+        color: {c.TEXT_MUTED};
+    }}
+
+    /* -------------------------------------------------------------- */
     /* Line edit / URL field                                           */
     /* -------------------------------------------------------------- */
     QLineEdit {{
@@ -326,6 +375,12 @@ def build_stylesheet(c: ColorTokens) -> str:
     /* -------------------------------------------------------------- */
     /* Dropdowns                                                        */
     /* -------------------------------------------------------------- */
+    /* The CLOSED control is app.widgets.AnimatedComboBox, which paints its
+       own background, border and chevron (the native drop-down arrow is a
+       platform pixmap QSS can tint but not reshape, and it read as
+       pasted-in next to everything else here). These rules are the
+       pre-apply_theme() fallback for that one frame before colors arrive.
+       The POPUP below is the part QSS genuinely owns. */
     QComboBox {{
         background-color: {c.SURFACE_ALT};
         border: 1px solid {c.BORDER};
@@ -335,26 +390,50 @@ def build_stylesheet(c: ColorTokens) -> str:
         color: {c.TEXT_PRIMARY};
         min-height: 20px;
     }}
-    QComboBox:hover {{
-        border: 1px solid {c.ACCENT};
-    }}
     QComboBox:disabled {{
         background-color: {c.DISABLED_BG};
         color: {c.DISABLED_TEXT};
         border: 1px solid {c.DISABLED_BORDER};
     }}
+    /* Zero-width, because AnimatedComboBox draws the chevron itself and a
+       native sub-control here would sit on top of it. */
     QComboBox::drop-down {{
         border: none;
-        width: 24px;
+        width: 0px;
     }}
+
+    /* The open list. Note app.widgets._ComboItemDelegate must be installed
+       on the view for these item rules to take effect at all -- Windows'
+       native style otherwise draws its own row chrome (fixed heights, a
+       blue selection bar) that no stylesheet can override. */
     QComboBox QAbstractItemView {{
         background-color: {c.SURFACE};
         border: 1px solid {c.BORDER};
         border-radius: {RADIUS_CONTROL}px;
-        selection-background-color: {c.ACCENT_TINT};
-        selection-color: {c.TEXT_PRIMARY};
+        selection-background-color: transparent;
         outline: none;
         padding: {SPACE_XS}px;
+        margin-top: {SPACE_XS}px;
+    }}
+    QComboBox QAbstractItemView::item {{
+        border-radius: 6px;
+        padding: 0px {SPACE_SM}px;
+        margin: 1px 0px;
+        color: {c.TEXT_MUTED};
+        border: none;
+    }}
+    /* Hover and keyboard-highlight get the same treatment, so arrowing
+       through the list looks identical to moving the mouse down it. */
+    QComboBox QAbstractItemView::item:hover,
+    QComboBox QAbstractItemView::item:selected {{
+        background-color: {c.ACCENT_TINT};
+        color: {c.TEXT_PRIMARY};
+    }}
+    /* The value currently in effect stays marked in accent even while the
+       cursor is elsewhere in the list. */
+    QComboBox QAbstractItemView::item:checked {{
+        color: {c.ACCENT};
+        font-weight: 600;
     }}
 
     /* -------------------------------------------------------------- */
