@@ -82,25 +82,51 @@ requires a paid Apple Developer account), only ad-hoc signed in CI
 (`codesign --force --deep --sign -`, see `build.yml`) so it at least
 satisfies Apple Silicon's requirement that executables carry *some*
 signature. So the first time a friend opens the built `.app`, macOS will
-refuse to launch it with an "Apple could not verify..." or "unidentified
-developer" message. The fix is one-time and doesn't need Terminal:
-right-click (or Control-click) `YouTube Downloader.app` and choose **Open**,
-then confirm **Open** again in the dialog that appears. After that, it opens
-normally forever, including via double-click. Worth mentioning to friends
-before you send it over so it doesn't look broken.
+refuse to launch it with an "Apple could not verify..." message (or on
+older macOS, "unidentified developer"). Two ways to fix it, both one-time:
+
+**Easiest: double-click `Fix Blocked App.command`**, included alongside
+the app in the CI zip (see `build.yml`'s "Zip the app bundle" step). It
+just clears the quarantine flag macOS puts on anything downloaded from
+the internet -- no Terminal typing needed, and it explains itself if
+opened. If it's blocked by the same Gatekeeper prompt as the app itself
+(script files are usually exempt, but not always), right-click it and
+choose **Open** instead of double-clicking.
+
+**Or, without any extra file:**
+
+1. Try to open the app once (double-click is fine) -- it'll get blocked
+   with the "Not Opened" dialog. This step is required; the bypass button
+   below doesn't appear until after a blocked attempt.
+2. Open **System Settings > Privacy & Security**, scroll down -- there's a
+   line saying `"YouTube Downloader" was blocked` with an **Open Anyway**
+   button next to it.
+3. Click it, confirm in the dialog that follows (password/Touch ID may be
+   asked for), then open the app again as normal.
+
+After either fix, the app opens normally forever, including via
+double-click. Worth mentioning to friends before you send it over so it
+doesn't look broken.
+
+(Older macOS versions -- pre-Sequoia -- instead let you bypass this by
+right-clicking the app and choosing **Open**, then confirming **Open**
+again in the dialog that appears, without needing System Settings at all.
+Current macOS shows the same blocked dialog either way and only the
+System Settings button actually bypasses it.)
 
 If a friend instead sees **"is damaged and can't be opened, you should move
-it to Trash"** (no Open option at all), that means Gatekeeper couldn't
-validate the signature -- either they're on a build from before the ad-hoc
-codesign step was added, or the zip transfer mangled it. One Terminal
-command clears it:
+it to Trash"** (no Open option at all, and it's not offered in System
+Settings either), that means Gatekeeper couldn't validate the signature
+at all -- either they're on a build from before the ad-hoc codesign step
+was added, or the zip transfer mangled it. One Terminal command clears it:
 
 ```bash
 xattr -cr ~/Downloads/"YouTube Downloader.app"
 ```
 
-(adjust the path if they moved it elsewhere first) -- then double-click or
-right-click > Open as above.
+(adjust the path if they moved it elsewhere first) -- then open it and
+use the System Settings steps above if it's still blocked (rather than
+damaged) after that.
 
 ## What's actually implemented
 
@@ -171,6 +197,8 @@ run.bat                       double-click to run from source on Windows (sets u
 run.command                   double-click to run from source on macOS (sets up .venv itself)
 build.bat                     double-click to build the .exe on Windows (sets up .venv itself)
 build.command                 double-click to build the .app on macOS (sets up .venv itself)
+Fix Blocked App.command       ships alongside the built .app in CI's macOS zip; clears the
+                               Gatekeeper quarantine flag for friends without needing Terminal
 main.py                       entry point: splash -> main window
 app/theme.py                  dark color tokens, QSS builder (single source of truth for style)
 app/theme_manager.py          thin wrapper around the (fixed, dark-only) color tokens
