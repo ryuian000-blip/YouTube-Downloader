@@ -21,6 +21,7 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
@@ -224,19 +225,18 @@ class HistoryRow(QFrame):
         )
         layout.setSpacing(theme.SPACE_SM)
 
+        self._entry = entry
+        self._store = store
         thumb_label = QLabel()
         thumb_label.setObjectName("thumbnailLabel")
         thumb_label.setFixedSize(self.THUMBNAIL_SIZE)
         thumb_label.setAlignment(Qt.AlignCenter)
-        image = store.load_thumbnail(entry.video_id) if entry.has_thumbnail else None
-        if image is not None:
-            pixmap = QPixmap.fromImage(image)
-            pixmap = fit_pixmap(pixmap, self.THUMBNAIL_SIZE)
-            # All four corners, unlike the poster band's top-only rounding
-            # -- this tile stands alone, it isn't the top half of a card
-            # with something else rounding the bottom half underneath it.
-            pixmap = rounded_pixmap(pixmap, theme.RADIUS_HISTORY_THUMB)
-            thumb_label.setPixmap(pixmap)
+        self._thumb_label = thumb_label
+        # The actual disk read + JPEG decode is deferred -- see
+        # loadThumbnail() -- rather than done here. Doing it for every row
+        # up front made a full-history rebuild take 200ms+ with a few dozen
+        # entries, long enough for Windows to render a stale "ghost" frame
+        # of the window while the UI thread was blocked (see HistoryPage).
         layout.addWidget(thumb_label)
 
         col = QVBoxLayout()
@@ -295,8 +295,29 @@ class HistoryRow(QFrame):
 
         layout.addLayout(actions)
 
+    def loadThumbnail(self) -> None:
+        """Loads and paints this row's cached thumbnail. Called by
+        HistoryPage shortly after construction rather than from __init__,
+        so a page full of rows doesn't block the UI thread with every
+        row's disk read + decode all at once."""
+        entry = self._entry
+        image = self._store.load_thumbnail(entry.video_id) if entry.has_thumbnail else None
+        if image is not None:
+            pixmap = QPixmap.fromImage(image)
+            pixmap = fit_pixmap(pixmap, self.THUMBNAIL_SIZE)
+            # All four corners, unlike the poster band's top-only rounding
+            # -- this tile stands alone, it isn't the top half of a card
+            # with something else rounding the bottom half underneath it.
+            pixmap = rounded_pixmap(pixmap, theme.RADIUS_HISTORY_THUMB)
+            self._thumb_label.setPixmap(pixmap)
+
 
 class HistoryPage(QWidget):
+    # How many rows' thumbnails to decode per event-loop tick. Keeps each
+    # batch's own hitch small (a handful of ms) no matter how large the
+    # history grows, instead of one big synchronous block for the whole list.
+    THUMBNAIL_BATCH_SIZE = 8
+
     back_requested = Signal()
     redownload_requested = Signal(str)  # url
 
@@ -309,6 +330,11 @@ class HistoryPage(QWidget):
         self._row_entries: list[tuple[str, HistoryRow]] = []
         self._headers: list[_GroupHeader] = []
         self._collapsed: set[str] = set()
+        # Rows built but not yet thumbnail-loaded (see _load_thumbnail_batch).
+        self._pending_thumbnails: list[HistoryRow] = []
+        self._thumbnail_timer = QTimer(self)
+        self._thumbnail_timer.setSingleShot(True)
+        self._thumbnail_timer.timeout.connect(self._load_thumbnail_batch)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(
@@ -391,6 +417,11 @@ class HistoryPage(QWidget):
         # per keystroke) could very visibly stack old and new rows on top
         # of each other in that gap; hide() makes removal immediate and
         # deterministic instead of dependent on GC-ish timing.
+        # Stop any in-flight deferred thumbnail loading for the rows we're
+        # about to delete -- otherwise a fast search keystroke could queue
+        # loadThumbnail() calls against rows that no longer exist.
+        self._thumbnail_timer.stop()
+        self._pending_thumbnails.clear()
         for _bucket, row in self._row_entries:
             self._list_layout.removeWidget(row)
             row.hide()
@@ -406,7 +437,18 @@ class HistoryPage(QWidget):
         row = HistoryRow(entry, self._store, self._colors)
         row.redownload_clicked.connect(self.redownload_requested)
         row.remove_clicked.connect(self._on_remove)
+        self._pending_thumbnails.append(row)
         return row
+
+    def _load_thumbnail_batch(self) -> None:
+        batch, self._pending_thumbnails = (
+            self._pending_thumbnails[: self.THUMBNAIL_BATCH_SIZE],
+            self._pending_thumbnails[self.THUMBNAIL_BATCH_SIZE :],
+        )
+        for row in batch:
+            row.loadThumbnail()
+        if self._pending_thumbnails:
+            self._thumbnail_timer.start(0)
 
     def _insert(self, widget: QWidget) -> None:
         # Always immediately before the trailing stretch, so the layout
@@ -452,13 +494,26 @@ class HistoryPage(QWidget):
                     current_bucket = bucket
 
                 row = self._make_row(entry)
-                row.setVisible(bucket not in self._collapsed)
+                # A freshly-inserted widget is already visible by default --
+                # only touch setVisible() when a group is actually collapsed
+                # (reload() clears _collapsed before every rebuild, so on
+                # the common History-open path this skips 40+ redundant
+                # setVisible() calls, each of which cost real time in
+                # profiling despite being a no-op).
+                if bucket in self._collapsed:
+                    row.setVisible(False)
                 self._insert(row)
                 self._row_entries.append((bucket, row))
 
         self._empty_label.setVisible(not entries)
         count = len(entries)
         self._count_label.setText(f"{count} video" if count == 1 else f"{count} videos")
+
+        # Thumbnails are decoded in small batches on later event-loop ticks
+        # (see _load_thumbnail_batch) so the page itself appears immediately
+        # instead of blocking on every row's disk read + JPEG decode.
+        if self._pending_thumbnails:
+            self._thumbnail_timer.start(0)
 
     def _on_group_toggled(self, bucket: str, expanded: bool) -> None:
         if expanded:
