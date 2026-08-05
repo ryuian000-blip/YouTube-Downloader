@@ -9,6 +9,7 @@ pattern, per the rebuild brief.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,6 +76,12 @@ class FetchWorker(QThread):
             "noplaylist": True,  # a video ID + list= (e.g. auto "Radio" mixes)
                                   # would otherwise make yt-dlp try to resolve
                                   # a dynamically-generated playlist and hang.
+            "no_color": True,  # see the matching option in DownloadWorker.run --
+                                # nothing here currently surfaces styled text to
+                                # the UI, but yt-dlp's ANSI-detection is
+                                # env/terminal-dependent (see that comment), so
+                                # this is cheap insurance against ever needing
+                                # the same fix twice.
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -262,6 +269,20 @@ class DownloadOptions:
     force_overwrite: bool = False
 
 
+# Matches ANSI CSI sequences like "\x1b[0;32m" / "\x1b[0m". Belt-and-suspenders
+# alongside the "no_color" ydl_opt below: that stops yt-dlp from generating
+# colored _speed_str/_eta_str in the first place (its ANSI auto-detection is
+# unreliable for a frozen, windowed app with no real console), but stripping
+# defensively here means a stray escape code -- from a differently-behaved
+# yt-dlp version, say -- shows up as nothing rather than as the literal
+# garbled control characters Qt renders when it doesn't recognize them.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_ESCAPE_RE.sub("", text)
+
+
 class DownloadWorker(QThread):
     progress = Signal(float, str)   # percent 0-100, status text
     succeeded = Signal(str)         # final message
@@ -289,8 +310,8 @@ class DownloadWorker(QThread):
                 pct = max(0.0, min(100.0, downloaded / total * 100))
             else:
                 pct = 0.0
-            speed = d.get("_speed_str", "").strip()
-            eta = d.get("_eta_str", "").strip()
+            speed = _strip_ansi(d.get("_speed_str", "")).strip()
+            eta = _strip_ansi(d.get("_eta_str", "")).strip()
             label = f"Downloading… {pct:.0f}%"
             if speed:
                 label += f"  ({speed}"
@@ -308,6 +329,15 @@ class DownloadWorker(QThread):
             "format": self._format_string(),
             "outtmpl": str(o.output_dir / "%(title)s.%(ext)s"),
             "progress_hooks": [self._progress_hook],
+            # yt-dlp colorizes _speed_str/_eta_str for terminal display
+            # (see its ProgressStyles/_format_progress) based on
+            # auto-detecting whether the output stream supports ANSI --
+            # a heuristic that isn't reliable for a frozen, windowed GUI
+            # app with no real console attached. Without this, those
+            # embedded escape codes showed up as literal garbled
+            # characters in _progress_status_label, since Qt doesn't
+            # interpret ANSI sequences the way a terminal would.
+            "no_color": True,
         }
 
         if o.ffmpeg_location:

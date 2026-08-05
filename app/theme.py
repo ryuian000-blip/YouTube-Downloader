@@ -218,6 +218,22 @@ def build_stylesheet(c: ColorTokens) -> str:
         font-weight: 600;
     }}
 
+    /* Pill background for the download-status overlay floating on the
+       poster thumbnail (see PosterThumbnail.setOverlay in widgets.py).
+       Keyed by objectName, not role: role keeps toggling between
+       status/statusError/statusWarning/statusSuccess above for TEXT
+       color as the download progresses, but the dark pill underneath it
+       -- needed so the text stays legible over an arbitrary, unpredictable
+       thumbnail image -- stays constant across all of those, and QSS
+       composes both rules onto the same widget at once (this one
+       contributes background/shape, the role rule above contributes
+       color) since neither declares a property the other one does. */
+    QLabel#progressOverlay {{
+        background-color: rgba(0, 0, 0, 160);
+        border-radius: {RADIUS_CONTROL}px;
+        padding: 3px 9px;
+    }}
+
     QLabel[role="body"] {{
         font-size: {SIZE_BODY}px;
         color: {c.TEXT_PRIMARY};

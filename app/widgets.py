@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
+    QGraphicsDropShadowEffect,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -1257,11 +1258,14 @@ class PosterThumbnail(QLabel):
     """
 
     ASPECT = 9 / 16
+    # Inset of the overlay (see setOverlay) from this widget's own edges.
+    OVERLAY_MARGIN = 8
 
     def __init__(self, radius: int, parent=None) -> None:
         super().__init__(parent)
         self._image = None
         self._radius = radius
+        self._overlay: QWidget | None = None
         self.setAlignment(Qt.AlignCenter)
         policy = QSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         policy.setHeightForWidth(True)
@@ -1282,9 +1286,38 @@ class PosterThumbnail(QLabel):
         self._image = image
         self._render()
 
+    def setOverlay(self, widget: QWidget) -> None:  # noqa: N802 (Qt naming)
+        """Float ``widget`` bottom-left over the artwork -- the same
+        parent-manages-geometry overlay technique SplashOverlay uses over
+        the whole window (see app/splash.py), just scoped to this label
+        instead. Reparented here rather than added to any layout, so
+        showing/hiding it or changing its content never shifts anything
+        else in the surrounding card: it simply isn't part of that layout
+        at all.
+
+        Positioning happens on every resize (below) AND has to be
+        re-triggered manually via refreshOverlay() after the overlay's own
+        content changes -- e.g. new/longer status text -- since that can
+        change the overlay's height (bottom-anchored, so it needs
+        repositioning) without this widget itself ever resizing.
+        """
+        self._overlay = widget
+        widget.setParent(self)
+        self.refreshOverlay()
+
+    def refreshOverlay(self) -> None:  # noqa: N802 (Qt naming)
+        if self._overlay is None:
+            return
+        m = self.OVERLAY_MARGIN
+        self._overlay.setMaximumWidth(max(1, self.width() - m * 2))
+        self._overlay.adjustSize()
+        self._overlay.move(m, self.height() - m - self._overlay.height())
+        self._overlay.raise_()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._render()
+        self.refreshOverlay()
 
     def _render(self) -> None:
         from PySide6.QtGui import QPixmap

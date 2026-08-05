@@ -11,10 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QSize, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
@@ -296,6 +297,30 @@ class MainWindow(QMainWindow):
         self._thumbnail_label.setObjectName("posterThumb")
         layout.addWidget(self._thumbnail_label)
 
+        # Download status floats over the artwork itself (bottom-left,
+        # see PosterThumbnail.setOverlay) rather than sitting in
+        # meta_layout below. It used to live there, and showing it mid-
+        # download -- or its text changing length -- pushed the controls
+        # card and destination row down by however tall it was, breaking
+        # the equal-padding window sizing. As a floating overlay, showing,
+        # hiding, or resizing it never touches any other widget's position.
+        #
+        # A drop shadow plus its own semi-opaque pill background (QSS
+        # role="progressOverlay" in theme.py) is what keeps it legible
+        # regardless of what's directly behind it -- plain status-colored
+        # text alone would vanish against a thumbnail with similar tones.
+        self._progress_status_label = QLabel("")
+        self._progress_status_label.setObjectName("progressOverlay")
+        self._progress_status_label.setProperty("role", "progressOverlay")
+        self._progress_status_label.setWordWrap(True)
+        self._progress_status_label.setVisible(False)
+        shadow = QGraphicsDropShadowEffect(self._progress_status_label)
+        shadow.setBlurRadius(14)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 170))
+        self._progress_status_label.setGraphicsEffect(shadow)
+        self._thumbnail_label.setOverlay(self._progress_status_label)
+
         # Directly beneath the artwork and spanning the card edge-to-edge,
         # so download progress reads as a scrubber belonging to this video
         # rather than a detached bar somewhere further down the window.
@@ -327,15 +352,6 @@ class MainWindow(QMainWindow):
         self._chip_row.setSpacing(theme.SPACE_XS + 2)
         self._chip_row.addStretch(1)
         meta_layout.addLayout(self._chip_row)
-
-        # Download status lives in the card too, right under the bar it
-        # describes. Hidden while empty so it doesn't reserve a blank line
-        # in the card before a download has ever run.
-        self._progress_status_label = QLabel("")
-        self._progress_status_label.setProperty("role", "status")
-        self._progress_status_label.setWordWrap(True)
-        self._progress_status_label.setVisible(False)
-        meta_layout.addWidget(self._progress_status_label)
 
         layout.addWidget(meta)
         return card
@@ -893,11 +909,17 @@ class MainWindow(QMainWindow):
         self._download_worker = None
 
     def _show_progress_status(self, text: str, role: str) -> None:
-        """The status line sits inside the media card now, so it hides
-        itself when empty rather than reserving a blank row in the card."""
+        """The status line floats over the thumbnail (see
+        PosterThumbnail.setOverlay), so it hides itself when empty rather
+        than reserving a blank row anywhere, and refreshOverlay() has to
+        be re-triggered here: it's bottom-anchored, so a text change that
+        alters its wrapped height (new text, or newly appearing/
+        disappearing) needs repositioning even though nothing about the
+        thumbnail itself resized."""
         self._progress_status_label.setText(text)
         set_role(self._progress_status_label, role)
         self._progress_status_label.setVisible(bool(text))
+        self._thumbnail_label.refreshOverlay()
 
     def _on_download_progress(self, pct: float, text: str) -> None:
         self._progress_bar.setValue(int(pct))
