@@ -133,14 +133,14 @@ jobs:
         # uploading the resulting .zip as a single file keeps the
         # "YouTube Downloader.app" folder intact end to end.
         #
-        # Also bundles in "Fix Blocked App.command" (see README's
-        # Gatekeeper section) so a friend has a one-click alternative to
-        # digging through System Settings > Privacy & Security when the
-        # ad-hoc-signed .app gets blocked on first open.
+        # Also bundles in "YouTube Downloader - Open Me First.command"
+        # (see README's Gatekeeper section) so a friend has a one-click
+        # alternative to digging through System Settings > Privacy &
+        # Security when the ad-hoc-signed .app gets blocked on first open.
         run: |
           mkdir dist/stage
           mv "dist/YouTube Downloader.app" dist/stage/
-          cp "Fix Blocked App.command" dist/stage/
+          cp "YouTube Downloader - Open Me First.command" dist/stage/
           ditto -c -k dist/stage "dist/YouTube Downloader-macos.zip"
 
       - name: Upload artifact

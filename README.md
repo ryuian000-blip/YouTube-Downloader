@@ -85,13 +85,14 @@ signature. So the first time a friend opens the built `.app`, macOS will
 refuse to launch it with an "Apple could not verify..." message (or on
 older macOS, "unidentified developer"). Two ways to fix it, both one-time:
 
-**Easiest: double-click `Fix Blocked App.command`**, included alongside
-the app in the CI zip (see `build.yml`'s "Zip the app bundle" step). It
-just clears the quarantine flag macOS puts on anything downloaded from
-the internet -- no Terminal typing needed, and it explains itself if
-opened. If it's blocked by the same Gatekeeper prompt as the app itself
-(script files are usually exempt, but not always), right-click it and
-choose **Open** instead of double-clicking.
+**Easiest: double-click `YouTube Downloader - Open Me First.command`**,
+included alongside the app in the CI zip (see `build.yml`'s "Zip the app
+bundle" step) -- the name is the instruction. It just clears the
+quarantine flag macOS puts on anything downloaded from the internet -- no
+Terminal typing needed, and it explains itself if opened. If it's blocked
+by the same Gatekeeper prompt as the app itself (script files are usually
+exempt, but not always), right-click it and choose **Open** instead of
+double-clicking.
 
 **Or, without any extra file:**
 
@@ -197,7 +198,8 @@ run.bat                       double-click to run from source on Windows (sets u
 run.command                   double-click to run from source on macOS (sets up .venv itself)
 build.bat                     double-click to build the .exe on Windows (sets up .venv itself)
 build.command                 double-click to build the .app on macOS (sets up .venv itself)
-Fix Blocked App.command       ships alongside the built .app in CI's macOS zip; clears the
+YouTube Downloader - Open Me First.command
+                               ships alongside the built .app in CI's macOS zip; clears the
                                Gatekeeper quarantine flag for friends without needing Terminal
 main.py                       entry point: splash -> main window
 app/theme.py                  dark color tokens, QSS builder (single source of truth for style)
