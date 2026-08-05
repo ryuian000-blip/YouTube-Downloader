@@ -1006,12 +1006,22 @@ class IconButton(QAbstractButton):
 
     ``setBusy(True)`` swaps the glyph for a spinning arc, which is what
     replaces the old "Fetching…" button text now that there is no text.
+
+    ``danger=True`` (the History page's remove button) keeps the border and
+    glyph tinted toward ColorTokens.ERROR at rest, not just on hover -- a
+    destructive action stays visually distinct from the read the ghost
+    style is a copy of, rather than looking identical to redownload until
+    the exact moment the cursor is over it.
     """
 
-    def __init__(self, glyph: str, primary: bool = False, diameter: int = 36, parent=None) -> None:
+    def __init__(
+        self, glyph: str, primary: bool = False, danger: bool = False,
+        diameter: int = 36, parent=None,
+    ) -> None:
         super().__init__(parent)
         self._glyph = glyph
         self._primary = primary
+        self._danger = danger
         self._colors: ColorTokens | None = None
         self._hover_t = 0.0
         self._press_t = 0.0
@@ -1140,6 +1150,10 @@ class IconButton(QAbstractButton):
             )
             border = None
             glyph_color = QColor(c.ON_ACCENT)
+        elif self._danger:
+            bg = _mix(QColor(c.SURFACE_ALT), QColor(c.BORDER), max(self._hover_t, self._press_t))
+            border = QColor(c.ERROR)
+            glyph_color = QColor(c.ERROR)
         else:
             bg = _mix(QColor(c.SURFACE_ALT), QColor(c.BORDER), max(self._hover_t, self._press_t))
             border = _mix(QColor(c.BORDER), QColor(c.ACCENT), self._hover_t)
@@ -1160,10 +1174,16 @@ class IconButton(QAbstractButton):
             icons.draw_spinner(p, glyph_rect.adjusted(-2, -2, 2, 2), glyph_color, self._spin)
         elif self._glyph == "arrow":
             icons.draw_arrow_right(p, glyph_rect, glyph_color)
+        elif self._glyph == "back":
+            icons.draw_arrow_left(p, glyph_rect, glyph_color)
         elif self._glyph == "clock":
             icons.draw_clock(p, glyph_rect, glyph_color)
         elif self._glyph == "folder":
             icons.draw_folder(p, glyph_rect, glyph_color)
+        elif self._glyph == "refresh":
+            icons.draw_refresh(p, glyph_rect, glyph_color)
+        elif self._glyph == "close":
+            icons.draw_close(p, glyph_rect, glyph_color)
         p.end()
 
 

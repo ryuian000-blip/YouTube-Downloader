@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         self._binary_status = binaries.detect()
         self._output_dir = Path.home() / "Downloads"
         self._video_info: VideoInfo | None = None
+        self._last_download_options: DownloadOptions | None = None
         self._fetch_worker: FetchWorker | None = None
         self._download_worker: DownloadWorker | None = None
         # Explicit flags rather than checking _fetch_worker/_download_worker
@@ -784,6 +785,12 @@ class MainWindow(QMainWindow):
             ),
             force_overwrite=force_overwrite,
         )
+        # Recorded here, not re-read from the combo boxes when the download
+        # finishes: nothing currently locks quality/mode while a download is
+        # in flight, so re-reading them afterward could describe a
+        # selection the user changed mid-download rather than what was
+        # actually saved.
+        self._last_download_options = options
 
         self._download_in_progress = True
         self._download_btn.setEnabled(False)
@@ -846,11 +853,18 @@ class MainWindow(QMainWindow):
         # formatted link updating the same history entry instead of
         # creating a duplicate.
         url = raw.get("webpage_url") or self._url_edit.text().strip()
+
+        opts = self._last_download_options
+        mode = opts.mode if opts else self._current_mode()
+        height = opts.height if opts else self._quality_combo.currentData()
+
         self._history.add_or_update(
             video_id=str(video_id),
             title=self._video_info.title,
             url=url,
             thumbnail=self._video_info.thumbnail,
+            duration=format_duration(raw),
+            size_bytes=estimate_download_size(raw, mode, height),
         )
 
     def _on_show_history(self) -> None:

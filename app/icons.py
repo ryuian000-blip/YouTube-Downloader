@@ -47,6 +47,20 @@ def draw_arrow_right(p: QPainter, rect: QRectF, color: QColor, width: float = 1.
     p.restore()
 
 
+def draw_arrow_left(p: QPainter, rect: QRectF, color: QColor, width: float = 1.9) -> None:
+    """Back (History page). Mirror of draw_arrow_right."""
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(_pen(color, width))
+    p.setBrush(Qt.NoBrush)
+    p.drawLine(_pt(rect, 19, 12), _pt(rect, 6.5, 12))
+    path = QPainterPath(_pt(rect, 11.5, 6.5))
+    path.lineTo(_pt(rect, 6, 12))
+    path.lineTo(_pt(rect, 11.5, 17.5))
+    p.drawPath(path)
+    p.restore()
+
+
 def draw_clock(p: QPainter, rect: QRectF, color: QColor, width: float = 1.7) -> None:
     """History."""
     p.save()
@@ -89,6 +103,38 @@ def draw_chevron_down(p: QPainter, rect: QRectF, color: QColor, width: float = 1
     path.lineTo(_pt(rect, 12, 15.25))
     path.lineTo(_pt(rect, 18, 9.75))
     p.drawPath(path)
+    p.restore()
+
+
+def draw_refresh(p: QPainter, rect: QRectF, color: QColor, width: float = 1.8) -> None:
+    """Redownload. A near-complete ring (a deliberate gap, not a closed
+    circle -- a full circle reads as a status dot, not an action) with one
+    arrowhead, visually related to draw_spinner since both represent
+    "doing the fetch again"."""
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(_pen(color, width))
+    p.setBrush(Qt.NoBrush)
+    arc = QRectF(_pt(rect, 4.5, 4.5), _pt(rect, 19.5, 19.5))
+    p.drawArc(arc, 40 * 16, 290 * 16)
+
+    head = QPainterPath(_pt(rect, 16.6, 3.6))
+    head.lineTo(_pt(rect, 20.4, 5.9))
+    head.lineTo(_pt(rect, 17.3, 9.4))
+    head.closeSubpath()
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    p.drawPath(head)
+    p.restore()
+
+
+def draw_close(p: QPainter, rect: QRectF, color: QColor, width: float = 1.9) -> None:
+    """Remove-from-history."""
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(_pen(color, width))
+    p.drawLine(_pt(rect, 6.5, 6.5), _pt(rect, 17.5, 17.5))
+    p.drawLine(_pt(rect, 17.5, 6.5), _pt(rect, 6.5, 17.5))
     p.restore()
 
 

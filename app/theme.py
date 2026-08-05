@@ -90,6 +90,11 @@ SPACE_LG = 24
 
 RADIUS_CARD = 18
 RADIUS_CONTROL = 8
+# A history row's thumbnail is a standalone tile, not half of a card the
+# way the poster's is -- so it rounds on all four corners, at a radius
+# between CONTROL and CARD that suits its size (116x65, versus the
+# poster's much larger full-bleed band).
+RADIUS_HISTORY_THUMB = 10
 
 # ---------------------------------------------------------------------------
 # Typography

@@ -31,6 +31,13 @@ class HistoryEntry:
     url: str
     downloaded_at: str  # ISO 8601 UTC -- also the sort key (newest first)
     has_thumbnail: bool
+    # Both optional and both trailing, so HistoryEntry(**item) still works
+    # unchanged on a history.json written before these existed -- an entry
+    # from an older build just renders its row without these two chips.
+    duration: str | None = None      # already-formatted, e.g. "12:34"
+    size_bytes: float | None = None  # formatted at display time (see
+                                      # workers.format_filesize), not here,
+                                      # so unit-choice logic stays in one place
 
 
 class HistoryStore:
@@ -82,12 +89,18 @@ class HistoryStore:
         return image if not image.isNull() else None
 
     def add_or_update(
-        self, video_id: str, title: str, url: str, thumbnail: QImage | None
+        self,
+        video_id: str,
+        title: str,
+        url: str,
+        thumbnail: QImage | None,
+        duration: str | None = None,
+        size_bytes: float | None = None,
     ) -> HistoryEntry:
         """Adds a new entry, or -- if this video was already downloaded
-        before -- updates its title/url/timestamp in place rather than
-        creating a duplicate. The refreshed timestamp is what moves a
-        redownloaded video back to the top of the list."""
+        before -- updates its title/url/timestamp/duration/size in place
+        rather than creating a duplicate. The refreshed timestamp is what
+        moves a redownloaded video back to the top of the list."""
         thumb_path = self.thumbnail_path(video_id)
         if thumbnail is not None and not thumbnail.isNull():
             has_thumbnail = thumbnail.save(str(thumb_path), "JPG", 85)
@@ -103,6 +116,8 @@ class HistoryStore:
             url=url,
             downloaded_at=datetime.now(timezone.utc).isoformat(),
             has_thumbnail=has_thumbnail,
+            duration=duration,
+            size_bytes=size_bytes,
         )
         self._entries[video_id] = entry
         self._save()
