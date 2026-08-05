@@ -21,11 +21,17 @@ from yt_dlp.networking.common import Request as YdlRequest
 
 # Without this, yt-dlp's default client selection (web/tv) lists formats
 # whose URLs then 403 on actual download unless a PO token is supplied --
-# YouTube's current anti-bot posture for anonymous requests. The android
-# client's URLs don't carry that requirement. Used for both fetch (so the
+# YouTube's current anti-bot posture for anonymous requests. Plain
+# "android" avoids the 403 but YouTube caps it at 360p without a token
+# too (verified: identical low ceiling to the default clients). android_vr
+# is the one client that hands back the full quality ladder (tested up to
+# 4K) with working, un-gated URLs -- no PO token warning at all, verified
+# against multiple real videos. Kept "android" as a fallback in case some
+# videos restrict the VR client specifically. Used for both fetch (so the
 # formats FetchWorker reports are the same ones DownloadWorker can actually
-# pull) and download.
-_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android", "web"]}}
+# pull) and download. YouTube's anti-bot posture shifts over time, so this
+# may need revisiting if quality options silently drop again.
+_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android_vr", "android"]}}
 
 
 # ---------------------------------------------------------------------------
