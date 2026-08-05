@@ -575,7 +575,12 @@ class MainWindow(QMainWindow):
         # spinner (IconButton.setBusy above) already says a fetch is
         # running, and this line just duplicated it.
 
-        self._fetch_worker = FetchWorker(url, self)
+        js_runtime_path = (
+            str(self._binary_status.js_runtime)
+            if self._binary_status.js_runtime
+            else None
+        )
+        self._fetch_worker = FetchWorker(url, js_runtime_path, self)
         self._fetch_worker.succeeded.connect(self._on_fetch_succeeded)
         self._fetch_worker.failed.connect(self._on_fetch_failed)
         self._fetch_worker.finished.connect(self._reset_fetch_button)

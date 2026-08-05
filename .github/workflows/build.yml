@@ -90,8 +90,24 @@ jobs:
         # right-click > Open (see README's Gatekeeper section).
         run: codesign --force --deep --sign - "dist/YouTube Downloader.app"
 
+      - name: Zip the app bundle
+        # actions/upload-artifact treats a directory path as the archive
+        # root -- i.e. it uploads Contents/, Contents/MacOS/, etc. loose at
+        # the top level, not wrapped in a "YouTube Downloader.app" folder.
+        # Downloading and unzipping that gives you the bundle's insides
+        # scattered on disk, not a double-clickable .app: Finder has
+        # nothing to recognize as an app bundle, so the raw executable
+        # inside shows a generic "exec" icon instead of the real one.
+        # ditto preserves the bundle (and its code signature) as a single
+        # unit the way Apple's own tools expect; zipping it ourselves and
+        # uploading the resulting .zip as a single file keeps the
+        # "YouTube Downloader.app" folder intact end to end.
+        run: |
+          cd dist
+          ditto -c -k --keepParent "YouTube Downloader.app" "YouTube Downloader-macos.zip"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Downloader-macos
-          path: dist/YouTube Downloader.app
+          path: dist/YouTube Downloader-macos.zip
