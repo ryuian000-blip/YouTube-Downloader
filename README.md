@@ -83,18 +83,22 @@ requires a paid Apple Developer account), only ad-hoc signed in CI
 satisfies Apple Silicon's requirement that executables carry *some*
 signature. So the first time a friend opens the built `.app`, macOS will
 refuse to launch it with an "Apple could not verify..." message (or on
-older macOS, "unidentified developer"). Two ways to fix it, both one-time:
-
-**Easiest: double-click `YouTube Downloader - Open Me First.command`**,
+older macOS, "unidentified developer"). `How To Open YouTube Downloader.html`,
 included alongside the app in the CI zip (see `build.yml`'s "Zip the app
-bundle" step) -- the name is the instruction. It just clears the
-quarantine flag macOS puts on anything downloaded from the internet -- no
-Terminal typing needed, and it explains itself if opened. If it's blocked
-by the same Gatekeeper prompt as the app itself (script files are usually
-exempt, but not always), right-click it and choose **Open** instead of
-double-clicking.
+bundle" step), walks a friend through the fix step by step -- opening
+Terminal, exactly what to paste, all of it. Worth mentioning to friends
+before you send the zip over so it doesn't look broken; point them at
+that file first if they hit the block.
 
-**Or, without any extra file:**
+Deliberately a plain HTML document, not a script: a `.command` helper
+would hit the *exact same* Gatekeeper block as the app itself (it's still
+an executable macOS has to "verify" too), which defeats the point.
+A document just opens in the browser -- no verification involved, so it
+can never be blocked. It even offers a copy button for the command in
+case Safari's clipboard permissions cooperate, and falls back to plain
+select-and-copy instructions if not.
+
+**The fix itself, without that file:**
 
 1. Try to open the app once (double-click is fine) -- it'll get blocked
    with the "Not Opened" dialog. This step is required; the bypass button
@@ -198,9 +202,9 @@ run.bat                       double-click to run from source on Windows (sets u
 run.command                   double-click to run from source on macOS (sets up .venv itself)
 build.bat                     double-click to build the .exe on Windows (sets up .venv itself)
 build.command                 double-click to build the .app on macOS (sets up .venv itself)
-YouTube Downloader - Open Me First.command
-                               ships alongside the built .app in CI's macOS zip; clears the
-                               Gatekeeper quarantine flag for friends without needing Terminal
+How To Open YouTube Downloader.html
+                               ships alongside the built .app in CI's macOS zip; walks a friend
+                               through the one-time Gatekeeper unblock step by step
 main.py                       entry point: splash -> main window
 app/theme.py                  dark color tokens, QSS builder (single source of truth for style)
 app/theme_manager.py          thin wrapper around the (fixed, dark-only) color tokens

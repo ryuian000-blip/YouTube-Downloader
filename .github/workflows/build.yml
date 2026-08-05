@@ -133,14 +133,17 @@ jobs:
         # uploading the resulting .zip as a single file keeps the
         # "YouTube Downloader.app" folder intact end to end.
         #
-        # Also bundles in "YouTube Downloader - Open Me First.command"
-        # (see README's Gatekeeper section) so a friend has a one-click
-        # alternative to digging through System Settings > Privacy &
-        # Security when the ad-hoc-signed .app gets blocked on first open.
+        # Also bundles in "How To Open YouTube Downloader.html" (see
+        # README's Gatekeeper section) so a friend has clear steps for
+        # the one-time unblock the ad-hoc-signed .app needs on first
+        # open. Deliberately a plain HTML file, not a script: a .command
+        # helper hits the exact same Gatekeeper block as the app itself
+        # (it's still an executable macOS has to "verify"), while a
+        # document just opens in the browser, no verification involved.
         run: |
           mkdir dist/stage
           mv "dist/YouTube Downloader.app" dist/stage/
-          cp "YouTube Downloader - Open Me First.command" dist/stage/
+          cp "How To Open YouTube Downloader.html" dist/stage/
           ditto -c -k dist/stage "dist/YouTube Downloader-macos.zip"
 
       - name: Upload artifact
