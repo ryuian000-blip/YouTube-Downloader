@@ -54,8 +54,13 @@ Produces `dist/YouTube Downloader.app`, a real double-clickable app bundle
    - ffmpeg/ffprobe on Windows: https://www.gyan.dev/ffmpeg/builds/ (the
      `ffmpeg-release-essentials` build; both `.exe` files are in the
      extracted `bin/` folder)
-   - ffmpeg/ffprobe on macOS: `brew install ffmpeg` (Homebrew), then copy
-     the two binaries (`which ffmpeg` / `which ffprobe`) into this folder
+   - ffmpeg/ffprobe on macOS: https://ffmpeg.martin-riedl.de/ (the arm64
+     or amd64 build matching your Mac, under "macos") -- **not**
+     `brew install ffmpeg`: Homebrew's build is dynamically linked against
+     ~25 of its own dylibs, so a copy of just the executable only runs on
+     the machine that installed it. This site's static builds have no
+     such dependencies and are the ones this app has actually been
+     tested against.
    - deno: https://github.com/denoland/deno/releases/latest (grab the
      `deno-x86_64-pc-windows-msvc.zip` build on Windows, or the
      `deno-aarch64-apple-darwin.zip` build on Apple Silicon Macs /

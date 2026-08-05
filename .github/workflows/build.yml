@@ -47,9 +47,9 @@ jobs:
 
   build-macos:
     # GitHub's macos-latest runners are Apple Silicon (arm64), so this
-    # produces an arm64 .app -- the ffmpeg/ffprobe from Homebrew and the
-    # deno binary below both match that. Friends on Intel Macs would need
-    # Rosetta (usually already installed) or a separate x86_64 runner.
+    # produces an arm64 .app -- the ffmpeg/ffprobe and deno binaries below
+    # both match that. Friends on Intel Macs would need Rosetta (usually
+    # already installed) or a separate x86_64 runner.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,13 +61,43 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Install ffmpeg via Homebrew
-        run: brew install ffmpeg
-
-      - name: Copy ffmpeg/ffprobe next to the project
+      - name: Download static ffmpeg/ffprobe (macOS arm64)
+        # NOT `brew install ffmpeg` + copy the binary: Homebrew's ffmpeg is
+        # dynamically linked against ~25 of its own dylibs (libavcodec,
+        # libx264, libopus, ...) resolved via @rpath into the Homebrew
+        # Cellar. Copying just the executable leaves those unresolved --
+        # PyInstaller doesn't bundle them either, so the shipped ffmpeg
+        # fails on any Mac without that exact Homebrew layout (i.e. every
+        # friend's Mac): `dyld: Library not loaded: @rpath/libavdevice.62.dylib`.
+        # ffmpeg.martin-riedl.de's static builds have no such dependencies
+        # (only Apple system frameworks, present on every Mac) -- verified
+        # by hand against this exact release. Scrapes the current release
+        # (not nightly) build for macOS arm64 and checksum-verifies it.
         run: |
-          cp "$(command -v ffmpeg)" ./ffmpeg
-          cp "$(command -v ffprobe)" ./ffprobe
+          set -euo pipefail
+          page=$(curl -fsSL -A "Mozilla/5.0" https://ffmpeg.martin-riedl.de/)
+          ffmpeg_path=$(echo "$page" | grep -oE 'href="/download/macos/arm64/[0-9]+_[0-9.]+/ffmpeg\.zip"' | sed 's/href="//;s/"//' | sort -t/ -k5 -n | tail -1)
+          ffprobe_path=$(echo "$ffmpeg_path" | sed 's/ffmpeg\.zip$/ffprobe.zip/')
+          if [ -z "$ffmpeg_path" ]; then
+            echo "Could not find a macOS arm64 release build on ffmpeg.martin-riedl.de" >&2
+            exit 1
+          fi
+          base="https://ffmpeg.martin-riedl.de"
+          for name in ffmpeg ffprobe; do
+            path=$(eval echo "\$${name}_path")
+            curl -fsSL -A "Mozilla/5.0" -o "$name.zip" "$base$path"
+            curl -fsSL -A "Mozilla/5.0" -o "$name.zip.sha256" "$base$path.sha256"
+            expected=$(awk '{print $1}' "$name.zip.sha256")
+            actual=$(shasum -a 256 "$name.zip" | awk '{print $1}')
+            if [ "$expected" != "$actual" ]; then
+              echo "Checksum mismatch for $name.zip" >&2
+              exit 1
+            fi
+            unzip -o -q "$name.zip" -d "${name}_extracted"
+            mv "${name}_extracted/$name" "./$name"
+            chmod +x "./$name"
+            rm -rf "$name.zip" "$name.zip.sha256" "${name}_extracted"
+          done
 
       - name: Download Deno
         run: |
