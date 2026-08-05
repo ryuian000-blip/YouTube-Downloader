@@ -312,7 +312,6 @@ class MainWindow(QMainWindow):
         self._progress_status_label = QLabel("")
         self._progress_status_label.setObjectName("progressOverlay")
         self._progress_status_label.setProperty("role", "progressOverlay")
-        self._progress_status_label.setWordWrap(True)
         self._progress_status_label.setVisible(False)
         shadow = QGraphicsDropShadowEffect(self._progress_status_label)
         shadow.setBlurRadius(14)
@@ -910,16 +909,16 @@ class MainWindow(QMainWindow):
 
     def _show_progress_status(self, text: str, role: str) -> None:
         """The status line floats over the thumbnail (see
-        PosterThumbnail.setOverlay), so it hides itself when empty rather
-        than reserving a blank row anywhere, and refreshOverlay() has to
-        be re-triggered here: it's bottom-anchored, so a text change that
-        alters its wrapped height (new text, or newly appearing/
-        disappearing) needs repositioning even though nothing about the
-        thumbnail itself resized."""
-        self._progress_status_label.setText(text)
+        PosterThumbnail.setOverlay) and always renders as one line --
+        setOverlayText() elides it to fit rather than the label's own
+        setText(), which would show the full text and let it wrap across
+        the artwork. It also handles repositioning itself (needed even
+        when the thumbnail itself hasn't resized, since new/shorter/
+        longer text changes the bottom-anchored overlay's own height),
+        so hiding it when empty is the only thing left to do here."""
+        self._thumbnail_label.setOverlayText(text)
         set_role(self._progress_status_label, role)
         self._progress_status_label.setVisible(bool(text))
-        self._thumbnail_label.refreshOverlay()
 
     def _on_download_progress(self, pct: float, text: str) -> None:
         self._progress_bar.setValue(int(pct))

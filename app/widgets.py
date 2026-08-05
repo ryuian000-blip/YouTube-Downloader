@@ -1260,12 +1260,17 @@ class PosterThumbnail(QLabel):
     ASPECT = 9 / 16
     # Inset of the overlay (see setOverlay) from this widget's own edges.
     OVERLAY_MARGIN = 8
+    # Must match #progressOverlay's QSS `padding: 3px 9px` (theme.py) --
+    # eliding targets the width left over for TEXT once that padding is
+    # subtracted, not the pill's own outer width.
+    OVERLAY_H_PADDING = 18
 
     def __init__(self, radius: int, parent=None) -> None:
         super().__init__(parent)
         self._image = None
         self._radius = radius
         self._overlay: QWidget | None = None
+        self._overlay_full_text = ""
         self.setAlignment(Qt.AlignCenter)
         policy = QSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         policy.setHeightForWidth(True)
@@ -1295,21 +1300,43 @@ class PosterThumbnail(QLabel):
         else in the surrounding card: it simply isn't part of that layout
         at all.
 
-        Positioning happens on every resize (below) AND has to be
-        re-triggered manually via refreshOverlay() after the overlay's own
-        content changes -- e.g. new/longer status text -- since that can
-        change the overlay's height (bottom-anchored, so it needs
-        repositioning) without this widget itself ever resizing.
+        Text always renders as exactly one line -- set it via
+        setOverlayText(), not the widget's own setText(), which would
+        show the full text and let it wrap across the artwork instead of
+        eliding to fit. Positioning and eliding both happen on every
+        resize (below) AND have to be re-triggered manually via
+        refreshOverlay() after the overlay's own content changes, since a
+        text change can alter how much fits (and the overlay's height,
+        being bottom-anchored) without this widget itself ever resizing.
         """
         self._overlay = widget
         widget.setParent(self)
+        widget.setWordWrap(False)
+        self.refreshOverlay()
+
+    def setOverlayText(self, text: str) -> None:  # noqa: N802 (Qt naming)
+        """Set the overlay's content. Elided to fit the currently
+        available width so it always renders as a single line -- the full
+        text survives in self._overlay_full_text regardless, so widening
+        the thumbnail later (more available width) can reveal more of it
+        again rather than the elision being a one-way, increasingly-stale
+        truncation of whatever was set first."""
+        self._overlay_full_text = text
         self.refreshOverlay()
 
     def refreshOverlay(self) -> None:  # noqa: N802 (Qt naming)
         if self._overlay is None:
             return
         m = self.OVERLAY_MARGIN
-        self._overlay.setMaximumWidth(max(1, self.width() - m * 2))
+        max_w = max(1, self.width() - m * 2)
+
+        avail = max(10, max_w - self.OVERLAY_H_PADDING)
+        fm = QFontMetrics(self._overlay.font())
+        elided = fm.elidedText(self._overlay_full_text, Qt.ElideRight, avail)
+        self._overlay.setText(elided)
+        self._overlay.setToolTip(self._overlay_full_text)
+
+        self._overlay.setMaximumWidth(max_w)
         self._overlay.adjustSize()
         self._overlay.move(m, self.height() - m - self._overlay.height())
         self._overlay.raise_()
