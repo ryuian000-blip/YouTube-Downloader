@@ -43,7 +43,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Downloader-windows
-          path: dist/YouTube Downloader.exe
+          # Onedir build (see build.spec) -- the exe now lives in a folder
+          # alongside its unpacked dependencies rather than as a single
+          # file, so the whole folder is what needs to ship.
+          path: dist/YouTube Downloader
 
   build-macos:
     # GitHub's macos-latest runners are Apple Silicon (arm64), so this

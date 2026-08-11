@@ -1,5 +1,6 @@
 @echo off
-REM Builds the standalone YouTube Downloader.exe with PyInstaller.
+REM Builds YouTube Downloader.exe with PyInstaller, into a folder
+REM alongside its unpacked dependencies (onedir -- see build.spec for why).
 REM Double-click this file, or run it from a terminal.
 REM
 REM Expects ffmpeg.exe, ffprobe.exe, and deno.exe to already be sitting in
@@ -75,7 +76,9 @@ if errorlevel 1 (
 
 echo.
 echo Done. The finished app is at:
-echo   %cd%\dist\YouTube Downloader.exe
+echo   %cd%\dist\YouTube Downloader\YouTube Downloader.exe
+echo ^(that whole "YouTube Downloader" folder needs to stay together --
+echo the exe depends on the _internal folder next to it^)
 echo.
 pause
 endlocal

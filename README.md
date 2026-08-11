@@ -40,7 +40,11 @@ Windows, or `ffmpeg`/`ffprobe`/`deno` (no extension) on macOS.
 **Windows:** double-click `build.bat`. It sets up the same `.venv` as
 `run.bat` (reusing it if `run.bat` already made one), then runs PyInstaller.
 Warns but doesn't stop if `ffmpeg.exe`/`ffprobe.exe`/`deno.exe` aren't
-present yet. Produces `dist/YouTube Downloader.exe`.
+present yet. Produces `dist/YouTube Downloader/YouTube Downloader.exe`
+alongside an `_internal` folder it depends on -- an onedir build rather
+than a single portable exe, on purpose (see `build.spec`): it starts in
+about a quarter of the time, since nothing needs to self-extract to a
+temp folder on every launch. Keep the exe and `_internal` together.
 
 **macOS:** double-click `build.command` (same behavior as `build.bat`).
 Produces `dist/YouTube Downloader.app`, a real double-clickable app bundle
@@ -62,7 +66,8 @@ Produces `dist/YouTube Downloader.app`, a real double-clickable app bundle
      `deno-x86_64-apple-darwin.zip` on Intel Macs)
 2. `pip install -r requirements.txt`
 3. `pyinstaller build.spec`
-4. The finished app is at `dist/YouTube Downloader.exe` (Windows) or
+4. The finished app is at `dist/YouTube Downloader/YouTube Downloader.exe`
+   (Windows, keep it together with the `_internal` folder next to it) or
    `dist/YouTube Downloader.app` (macOS).
 
 The included GitHub Actions workflow (`.github/workflows/build.yml`) does
@@ -136,7 +141,7 @@ right-click > Open as above.
 These are the brief's own "verify before shipping" items, unchanged:
 
 - [ ] Confirm PySide6's LGPLv3 dynamic-linking assumption actually holds
-      for the exact PyInstaller onefile build produced here.
+      for the exact PyInstaller onedir build produced here.
 - [ ] Confirm the current name of yt-dlp's JS-challenge-solver dependency
       (see the comment in `requirements.txt`) against yt-dlp's own docs at
       build time -- it's been renamed before.
