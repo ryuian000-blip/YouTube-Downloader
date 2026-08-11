@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>How to open YouTube Downloader</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --accent: #8aa876;
+    --accent-dark: #6f8c5d;
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --text: #26291f;
+    --text-dim: #5b5f52;
+    --border: #e4e1d8;
+    --code-bg: #232620;
+    --code-text: #eae7dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1e18;
+      --card: #262920;
+      --text: #eeece4;
+      --text-dim: #b3b09f;
+      --border: #383b30;
+      --code-bg: #14150f;
+      --code-text: #eae7dc;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 20px 80px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 26px;
+    margin: 0 0 6px;
+  }
+  .sub {
+    color: var(--text-dim);
+    margin: 0 0 32px;
+    font-size: 15px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 26px;
+    margin-bottom: 20px;
+  }
+  .why {
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+  .step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 22px;
+  }
+  .step:last-child { margin-bottom: 0; }
+  .num {
+    flex: 0 0 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .step-body { flex: 1; padding-top: 3px; }
+  .step-body h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+  }
+  .step-body p {
+    margin: 0 0 8px;
+    font-size: 14.5px;
+    color: var(--text-dim);
+  }
+  kbd {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .code-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px;
+  }
+  .code-row code {
+    white-space: pre-wrap;
+    word-break: break-word;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .copy-btn {
+    flex: 0 0 auto;
+    margin-left: auto;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .copy-btn:active { background: var(--accent-dark); }
+  .note {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+  .divider {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12px;
+    margin: 18px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .fake-app-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 6px;
+    padding: 3px 9px 3px 6px;
+    font-size: 13px;
+  }
+  .fake-app-icon .sq {
+    width: 14px; height: 14px;
+    background: var(--accent);
+    border-radius: 4px;
+    display: inline-block;
+  }
+  footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    margin-top: 30px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Opening YouTube Downloader for the first time</h1>
+  <p class="sub">Your Mac will refuse to open it once, and that's normal. Here's the one-time fix.</p>
+
+  <div class="card">
+    <p class="why">
+      This app isn't signed with a paid Apple Developer certificate ($99/year),
+      so unlike apps from the App Store or big companies, macOS can't verify
+      who built it and blocks it the first time with a message like
+      "Apple could not verify &lsquo;YouTube Downloader&rsquo; is free of malware."
+      The steps below clear that block. You only need to do this once.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Open Terminal</h3>
+        <p>Press <kbd>⌘ Command</kbd> + <kbd>Space</kbd> to open Spotlight
+        search, type <kbd>Terminal</kbd>, then press <kbd>Return</kbd>.
+        A plain window with white or black text will open &mdash; that's Terminal.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Copy this command</h3>
+        <p>Click <strong>Copy</strong>, or triple-click the text below to
+        select it all and press <kbd>⌘ Command</kbd> + <kbd>C</kbd>. Then
+        click inside the Terminal window and press
+        <kbd>⌘ Command</kbd> + <kbd>V</kbd> to paste it in.</p>
+        <div class="code-row">
+          <code id="cmd">xattr -cr ~/Downloads/"YouTube Downloader.app"</code>
+          <button class="copy-btn" onclick="copyCmd()">Copy</button>
+        </div>
+        <p class="note" id="copy-note"></p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Press Return</h3>
+        <p>Nothing will appear to happen &mdash; that means it worked. If you see
+        red text mentioning "No such file", see the alternate method below;
+        it means the app isn't in your Downloads folder.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Open the app normally</h3>
+        <p>Close Terminal. Double-click
+        <span class="fake-app-icon"><span class="sq"></span>YouTube Downloader.app</span>
+        &mdash; it'll open right up, and every time after this too.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider">If the app isn't in your Downloads folder</div>
+
+  <div class="card">
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Open Terminal</h3>
+        <p>Same as above: <kbd>⌘ Command</kbd> + <kbd>Space</kbd>, type
+        <kbd>Terminal</kbd>, press <kbd>Return</kbd>.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Type or paste this, but don't press Return yet</h3>
+        <div class="code-row">
+          <code id="cmd2">xattr -cr </code>
+          <button class="copy-btn" onclick="copyCmd2()">Copy</button>
+        </div>
+        <p class="note">Note the space at the end &mdash; it matters. If
+        typing it yourself, it's exactly: <kbd>xattr</kbd> <kbd>-cr</kbd>
+        then one space.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Drag the app into the Terminal window</h3>
+        <p>Find <span class="fake-app-icon"><span class="sq"></span>YouTube Downloader.app</span>
+        in Finder (wherever you put it) and drag its icon onto the Terminal
+        window. Its exact location will get typed in for you automatically.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Press Return, then open the app</h3>
+        <p>Close Terminal and double-click the app &mdash; it'll open normally
+        from now on.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>You only need to do this once per Mac.</footer>
+</div>
+
+<script>
+function copyText(text, noteEl) {
+  var note = document.getElementById(noteEl);
+  function ok() { if (note) { note.textContent = "Copied."; setTimeout(function(){ note.textContent = ""; }, 2000); } }
+  function fail() { if (note) { note.textContent = "Couldn't copy automatically -- select the text above and press Cmd+C instead."; } }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(ok, fail);
+  } else {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      ok();
+    } catch (e) {
+      fail();
+    }
+  }
+}
+function copyCmd() { copyText(document.getElementById("cmd").textContent, "copy-note"); }
+function copyCmd2() { copyText(document.getElementById("cmd2").textContent, "copy-note"); }
+</script>
+</body>
+</html>

@@ -19,6 +19,21 @@ import yt_dlp
 from yt_dlp.networking.common import Request as YdlRequest
 
 
+# Without this, yt-dlp's default client selection (web/tv) lists formats
+# whose URLs then 403 on actual download unless a PO token is supplied --
+# YouTube's current anti-bot posture for anonymous requests. Plain
+# "android" avoids the 403 but YouTube caps it at 360p without a token
+# too (verified: identical low ceiling to the default clients). android_vr
+# is the one client that hands back the full quality ladder (tested up to
+# 4K) with working, un-gated URLs -- no PO token warning at all, verified
+# against multiple real videos. Kept "android" as a fallback in case some
+# videos restrict the VR client specifically. Used for both fetch (so the
+# formats FetchWorker reports are the same ones DownloadWorker can actually
+# pull) and download. YouTube's anti-bot posture shifts over time, so this
+# may need revisiting if quality options silently drop again.
+_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android_vr", "android"]}}
+
+
 # ---------------------------------------------------------------------------
 # Fetch (metadata only)
 # ---------------------------------------------------------------------------
@@ -64,9 +79,10 @@ class FetchWorker(QThread):
     succeeded = Signal(object)   # VideoInfo
     failed = Signal(str)
 
-    def __init__(self, url: str, parent=None) -> None:
+    def __init__(self, url: str, js_runtime_path: str | None = None, parent=None) -> None:
         super().__init__(parent)
         self._url = url
+        self._js_runtime_path = js_runtime_path
 
     def run(self) -> None:
         opts = {
@@ -82,7 +98,15 @@ class FetchWorker(QThread):
                                 # env/terminal-dependent (see that comment), so
                                 # this is cheap insurance against ever needing
                                 # the same fix twice.
+            "extractor_args": _EXTRACTOR_ARGS,
         }
+        if self._js_runtime_path:
+            # Without this, extract_info() fails on most real YouTube videos
+            # with "The page needs to be reloaded" -- yt-dlp needs a JS
+            # runtime to solve YouTube's nsig/JS challenge even just to list
+            # formats, not only to download. DownloadWorker already wires
+            # this through; fetch needs the same runtime for the same reason.
+            opts["js_runtimes"] = {"deno": {"path": self._js_runtime_path}}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(self._url, download=False)
@@ -338,6 +362,7 @@ class DownloadWorker(QThread):
             # characters in _progress_status_label, since Qt doesn't
             # interpret ANSI sequences the way a terminal would.
             "no_color": True,
+            "extractor_args": _EXTRACTOR_ARGS,
         }
 
         if o.ffmpeg_location:

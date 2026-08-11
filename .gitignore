@@ -7,7 +7,13 @@ venv/
 
 # Bundled binaries -- fetched fresh by CI (see .github/workflows/build.yml),
 # kept locally by hand per README.md. Do not commit these.
+# Windows names:
 ffmpeg.exe
 ffprobe.exe
 ffplay.exe
 deno.exe
+# macOS/Linux names (no extension):
+/ffmpeg
+/ffprobe
+/ffplay
+/deno
