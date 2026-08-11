@@ -39,14 +39,22 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller build.spec
 
+      - name: Zip the build
+        # actions/upload-artifact treats a directory path as the archive
+        # root -- uploading dist/YouTube Downloader directly would give a
+        # downloader the exe and _internal/ loose at the top level instead
+        # of one tidy folder to unzip (same issue the macOS job's "Zip the
+        # app bundle" step exists to avoid). Compress-Archive keeps the
+        # "YouTube Downloader" folder itself inside the zip; uploading
+        # that .zip as a single file preserves it end to end.
+        shell: pwsh
+        run: Compress-Archive -Path "dist/YouTube Downloader" -DestinationPath "dist/YouTube Downloader-windows.zip"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Downloader-windows
-          # Onedir build (see build.spec) -- the exe now lives in a folder
-          # alongside its unpacked dependencies rather than as a single
-          # file, so the whole folder is what needs to ship.
-          path: dist/YouTube Downloader
+          path: dist/YouTube Downloader-windows.zip
 
   build-macos:
     # GitHub's macos-latest runners are Apple Silicon (arm64), so this
