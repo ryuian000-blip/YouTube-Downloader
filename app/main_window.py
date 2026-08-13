@@ -610,6 +610,11 @@ class MainWindow(QMainWindow):
         self._video_title_label.setText(info.title)
         self._url_edit.clear_error()
         self._rescale_poster_thumb()
+        # Loading a new video shouldn't leave the previous one's leftover
+        # "Download complete." (or a failure message, or a half-full bar)
+        # showing over fresh artwork it no longer describes.
+        self._progress_bar.setValue(0)
+        self._show_progress_status("", "status")
 
         self._quality_combo.blockSignals(True)
         self._quality_combo.clear()

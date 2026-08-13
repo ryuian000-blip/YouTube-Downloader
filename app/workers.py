@@ -10,6 +10,7 @@ pattern, per the rebuild brief.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -312,6 +313,17 @@ class DownloadWorker(QThread):
     succeeded = Signal(str)         # final message
     failed = Signal(str)
 
+    # yt-dlp's own retries/fragment_retries (defaults: 10 each) retry
+    # individual HTTP requests against the format URLs already resolved by
+    # this extract_info() call -- they don't help when the resolved URLs
+    # themselves are the problem, e.g. a signed googlevideo URL that 403s
+    # from a transient anti-bot flag or expires before the merge/postprocess
+    # step finishes. A fresh extract_info() call resolves brand-new URLs,
+    # which is what manually clicking Download again already does -- this
+    # automates exactly that instead of making the user notice and retry.
+    _MAX_ATTEMPTS = 3
+    _RETRY_DELAY_SECONDS = 2
+
     def __init__(self, options: DownloadOptions, parent=None) -> None:
         super().__init__(parent)
         self._opts = options
@@ -401,23 +413,33 @@ class DownloadWorker(QThread):
 
         ydl_opts["postprocessors"] = postprocessors
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # extract_info(download=True), not the simpler download()
-                # -- download() only returns a retcode, but extract_info
-                # hands back the processed info dict, which is the only
-                # place yt-dlp records whether it *actually* wrote a file
-                # (see requested_downloads / __real_download below). That
-                # distinction is the whole point: without it, a silently
-                # skipped "already downloaded" file and a real one both
-                # just look like success.
-                result = ydl.extract_info(o.url, download=True)
-        except Exception as exc:
-            message = str(exc).strip().splitlines()[0] if str(exc) else "Download failed."
-            if len(message) > 160:
-                message = message[:157] + "..."
-            self.failed.emit(message)
-            return
+        result = None
+        last_message = "Download failed."
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # extract_info(download=True), not the simpler download()
+                    # -- download() only returns a retcode, but extract_info
+                    # hands back the processed info dict, which is the only
+                    # place yt-dlp records whether it *actually* wrote a file
+                    # (see requested_downloads / __real_download below). That
+                    # distinction is the whole point: without it, a silently
+                    # skipped "already downloaded" file and a real one both
+                    # just look like success.
+                    result = ydl.extract_info(o.url, download=True)
+                break
+            except Exception as exc:
+                message = str(exc).strip().splitlines()[0] if str(exc) else "Download failed."
+                if len(message) > 160:
+                    message = message[:157] + "..."
+                last_message = message
+                if attempt == self._MAX_ATTEMPTS:
+                    self.failed.emit(last_message)
+                    return
+                self.progress.emit(
+                    0.0, f"Retrying… (attempt {attempt + 1} of {self._MAX_ATTEMPTS})"
+                )
+                time.sleep(self._RETRY_DELAY_SECONDS)
 
         requested = (result or {}).get("requested_downloads") or []
         if requested:
