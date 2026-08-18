@@ -20,19 +20,21 @@ import yt_dlp
 from yt_dlp.networking.common import Request as YdlRequest
 
 
-# Without this, yt-dlp's default client selection (web/tv) lists formats
-# whose URLs then 403 on actual download unless a PO token is supplied --
-# YouTube's current anti-bot posture for anonymous requests. Plain
-# "android" avoids the 403 but YouTube caps it at 360p without a token
-# too (verified: identical low ceiling to the default clients). android_vr
-# is the one client that hands back the full quality ladder (tested up to
-# 4K) with working, un-gated URLs -- no PO token warning at all, verified
-# against multiple real videos. Kept "android" as a fallback in case some
-# videos restrict the VR client specifically. Used for both fetch (so the
-# formats FetchWorker reports are the same ones DownloadWorker can actually
-# pull) and download. YouTube's anti-bot posture shifts over time, so this
-# may need revisiting if quality options silently drop again.
-_EXTRACTOR_ARGS = {"youtube": {"player_client": ["android_vr", "android"]}}
+# Deliberately empty: no player_client pin. This app used to force
+# ["android_vr", "android"] because, as of July 2026, yt-dlp's default
+# clients 403'd without a PO token while android_vr handed back the full
+# un-gated quality ladder. YouTube then flipped that on its head: its
+# SABR-only streaming rollout (yt-dlp issue #12482) broke the android
+# clients' plain https formats -- downloads would start, reach 30%+, and
+# die with a mid-stream 403 that no retry could fix -- while the
+# *maintained defaults* in current yt-dlp (visionos etc., picked by
+# nightly) work, provided the JS challenge solver is available (deno +
+# the yt-dlp-ejs script package, see requirements.txt). Verified against
+# a real previously-failing video: pinned clients 403 at ~37%, defaults
+# complete at 1080p. Lesson encoded here: client pins rot as YouTube's
+# posture shifts -- let yt-dlp's own actively-maintained selection rule,
+# and keep yt-dlp itself current (nightly channel, see build scripts).
+_EXTRACTOR_ARGS: dict = {}
 
 
 # ---------------------------------------------------------------------------
@@ -308,39 +310,13 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
-def _is_drm_protected(url: str, js_runtime_path: str | None) -> bool:
-    """A last-resort diagnostic, called only after a download has already
-    failed every retry attempt with the same error -- not part of the
-    normal fetch/download path.
-
-    The "android_vr"/"android" clients this app normally uses (see
-    _EXTRACTOR_ARGS) don't surface DRM status in their player API
-    response: yt-dlp happily hands back what look like valid format URLs
-    for DRM-protected videos, the download starts and even makes real
-    progress, and only the CDN itself cuts it off (a plain HTTP 403) once
-    DRM enforcement kicks in -- indistinguishable, from this app's side,
-    from a transient anti-bot block that a retry would fix. yt-dlp's "tv"
-    client's player response DOES include the DRM signal, so a quick
-    metadata-only (skip_download) query against it is the only reliable
-    way to tell "this will never work, it's DRM" apart from "that was
-    just a bad request, try again" -- worth one extra lightweight request
-    only once retries are already exhausted, not on every download.
-    """
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "extractor_args": {"youtube": {"player_client": ["tv"]}},
-    }
-    if js_runtime_path:
-        opts["js_runtimes"] = {"deno": {"path": js_runtime_path}}
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.extract_info(url, download=False)
-    except Exception as exc:
-        return "drm" in str(exc).lower()
-    return False
+# NOTE: a `_is_drm_protected()` probe briefly lived here (checking the
+# "tv" client's player response after retries were exhausted). Removed on
+# purpose, not lost: the "This video is DRM protected" error it keyed on
+# turned out to be SABR-rollout noise -- YouTube serves *some* clients a
+# DRM-only manifest for videos that other clients stream (and download)
+# plainly, so the probe flagged videos as "copy-protected" that current
+# yt-dlp downloads fine. Don't re-add a client-specific DRM heuristic.
 
 
 class DownloadWorker(QThread):
@@ -469,8 +445,6 @@ class DownloadWorker(QThread):
                     message = message[:157] + "..."
                 last_message = message
                 if attempt == self._MAX_ATTEMPTS:
-                    if _is_drm_protected(o.url, o.js_runtime_path):
-                        last_message = "This video is copy-protected (DRM) and can't be downloaded."
                     self.failed.emit(last_message)
                     return
                 self.progress.emit(

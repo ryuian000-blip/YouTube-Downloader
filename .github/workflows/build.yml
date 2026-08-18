@@ -18,6 +18,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Update yt-dlp to nightly
+        # Stable yt-dlp lags YouTube's anti-bot/streaming changes by weeks,
+        # which has already broken every download once (SABR rollout vs
+        # stable 2026.7.4). See the note in requirements.txt.
+        run: pip install -U --pre "yt-dlp[default]"
+
       - name: Install ffmpeg via Chocolatey
         run: choco install ffmpeg-full -y
 
@@ -71,6 +77,10 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+
+      - name: Update yt-dlp to nightly
+        # Same reasoning as the Windows job -- see requirements.txt.
+        run: pip install -U --pre "yt-dlp[default]"
 
       - name: Download static ffmpeg/ffprobe (macOS arm64)
         # NOT `brew install ffmpeg` + copy the binary: Homebrew's ffmpeg is

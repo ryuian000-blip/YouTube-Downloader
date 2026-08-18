@@ -51,6 +51,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Nightly yt-dlp, not the stable release requirements.txt resolves to:
+REM stable lags YouTube's anti-bot/streaming changes by weeks, which has
+REM already broken every download once (SABR rollout vs stable 2026.7.4).
+REM See the note in requirements.txt.
+echo Updating yt-dlp to the latest nightly...
+python -m pip install --quiet --disable-pip-version-check -U --pre "yt-dlp[default]"
+if errorlevel 1 (
+    echo.
+    echo Failed to update yt-dlp. See the error above.
+    pause
+    exit /b 1
+)
+
 echo.
 set MISSING=0
 if not exist "ffmpeg.exe"  ( echo   - ffmpeg.exe not found  & set MISSING=1 )

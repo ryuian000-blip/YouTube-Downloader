@@ -3,9 +3,19 @@ yt-dlp
 pillow
 pyinstaller
 
-# yt-dlp's JS-challenge-solver dependency has been renamed/restructured
-# before -- confirm the current package name in yt-dlp's own docs
-# (https://github.com/yt-dlp/yt-dlp/wiki) before shipping, and add it here.
-# Deno itself is a standalone binary (bundled via PyInstaller --add-binary
-# / build.spec), not a pip package -- this line is only for whatever small
-# Python-side shim yt-dlp currently needs, if any.
+# yt-dlp's JS challenge solver scripts. Deno alone (the bundled binary) is
+# just the engine -- without this package there are no solver scripts for
+# it to run, YouTube's nsig/PO-token challenges silently fail, and most
+# clients either list no usable formats ("Only images are available") or
+# hand back URLs that 403. This was exactly the missing piece behind
+# mid-download 403s in August 2026.
+yt-dlp-ejs
+
+# NOTE: the plain "yt-dlp" line above resolves to the latest STABLE
+# release, which can lag YouTube's anti-bot/streaming changes by weeks --
+# long enough to break all downloads (YouTube's SABR-only rollout broke
+# stable 2026.7.4 while that was still the newest stable). The build
+# scripts (build.bat / build.command / build.yml) therefore upgrade to
+# yt-dlp's NIGHTLY channel after installing this file:
+#   pip install -U --pre "yt-dlp[default]"
+# Do the same in a dev venv if downloads start 403ing.

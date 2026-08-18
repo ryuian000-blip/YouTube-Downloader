@@ -43,6 +43,17 @@ if ! python3 -m pip install --quiet --disable-pip-version-check -r requirements.
     pause_and_exit
 fi
 
+# Nightly yt-dlp, not the stable release requirements.txt resolves to:
+# stable lags YouTube's anti-bot/streaming changes by weeks, which has
+# already broken every download once (SABR rollout vs stable 2026.7.4).
+# See the note in requirements.txt.
+echo "Updating yt-dlp to the latest nightly..."
+if ! python3 -m pip install --quiet --disable-pip-version-check -U --pre "yt-dlp[default]"; then
+    echo
+    echo "Failed to update yt-dlp. See the error above."
+    pause_and_exit
+fi
+
 echo
 missing=0
 for name in ffmpeg ffprobe deno; do
