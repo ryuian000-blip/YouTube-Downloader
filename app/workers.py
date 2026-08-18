@@ -308,6 +308,41 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
+def _is_drm_protected(url: str, js_runtime_path: str | None) -> bool:
+    """A last-resort diagnostic, called only after a download has already
+    failed every retry attempt with the same error -- not part of the
+    normal fetch/download path.
+
+    The "android_vr"/"android" clients this app normally uses (see
+    _EXTRACTOR_ARGS) don't surface DRM status in their player API
+    response: yt-dlp happily hands back what look like valid format URLs
+    for DRM-protected videos, the download starts and even makes real
+    progress, and only the CDN itself cuts it off (a plain HTTP 403) once
+    DRM enforcement kicks in -- indistinguishable, from this app's side,
+    from a transient anti-bot block that a retry would fix. yt-dlp's "tv"
+    client's player response DOES include the DRM signal, so a quick
+    metadata-only (skip_download) query against it is the only reliable
+    way to tell "this will never work, it's DRM" apart from "that was
+    just a bad request, try again" -- worth one extra lightweight request
+    only once retries are already exhausted, not on every download.
+    """
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "extractor_args": {"youtube": {"player_client": ["tv"]}},
+    }
+    if js_runtime_path:
+        opts["js_runtimes"] = {"deno": {"path": js_runtime_path}}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.extract_info(url, download=False)
+    except Exception as exc:
+        return "drm" in str(exc).lower()
+    return False
+
+
 class DownloadWorker(QThread):
     progress = Signal(float, str)   # percent 0-100, status text
     succeeded = Signal(str)         # final message
@@ -434,6 +469,8 @@ class DownloadWorker(QThread):
                     message = message[:157] + "..."
                 last_message = message
                 if attempt == self._MAX_ATTEMPTS:
+                    if _is_drm_protected(o.url, o.js_runtime_path):
+                        last_message = "This video is copy-protected (DRM) and can't be downloaded."
                     self.failed.emit(last_message)
                     return
                 self.progress.emit(
