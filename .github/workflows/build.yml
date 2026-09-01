@@ -72,13 +72,16 @@ jobs:
         # "YouTube Downloader" folder itself inside the zip; uploading
         # that .zip as a single file preserves it end to end.
         shell: pwsh
-        run: Compress-Archive -Path "dist/YouTube Downloader" -DestinationPath "dist/YouTube Downloader-windows.zip"
+        # Hyphens, no spaces: GitHub rewrites spaces to dots in release asset
+        # filenames, so a name with spaces never survives to the download
+        # page and stops matching the instructions in the release notes.
+        run: Compress-Archive -Path "dist/YouTube Downloader" -DestinationPath "dist/YouTube-Downloader-windows.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Downloader-windows
-          path: dist/YouTube Downloader-windows.zip
+          path: dist/YouTube-Downloader-windows.zip
 
   build-macos:
     # GitHub's macos-latest runners are Apple Silicon (arm64), so this
@@ -185,13 +188,13 @@ jobs:
           cp "How To Open YouTube Downloader.html" dist/stage/
           cp "CONNECT-TO-CLAUDE.md" dist/stage/
           cp "README.md" dist/stage/
-          ditto -c -k dist/stage "dist/YouTube Downloader-macos.zip"
+          ditto -c -k dist/stage "dist/YouTube-Downloader-macos.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Downloader-macos
-          path: dist/YouTube Downloader-macos.zip
+          path: dist/YouTube-Downloader-macos.zip
 
   release:
     # Only for tag pushes. Turns the two build artifacts into a public
@@ -220,12 +223,12 @@ jobs:
           body: |
             ## Download
 
-            - **Windows** — `YouTube Downloader-windows.zip`
+            - **Windows** — `YouTube-Downloader-windows.zip`
               Unzip, keep the folder together, run `YouTube Downloader.exe`.
               Windows shows an "unrecognised app" warning the first time:
               More info → Run anyway. (`How To Open ... (Windows).html` is in the zip.)
 
-            - **macOS (Apple Silicon)** — `YouTube Downloader-macos.zip`
+            - **macOS (Apple Silicon)** — `YouTube-Downloader-macos.zip`
               Unzip and drag the app to Applications. macOS blocks it on first
               open: System Settings → Privacy & Security → **Open Anyway**.
               (`How To Open YouTube Downloader.html` is in the zip.)
