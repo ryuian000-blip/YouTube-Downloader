@@ -110,6 +110,13 @@ def base_opts(js_runtime_path: str | None = None, **extra: Any) -> dict:
     opts: dict = {
         "quiet": True,
         "no_warnings": True,
+        # NOT covered by quiet=True: yt-dlp still renders its live
+        # progress bar, and it writes it to STDOUT. That broke the CLI's
+        # "JSON on stdout, nothing else" contract outright -- piping to
+        # jq failed, because ~30 progress lines arrived before the JSON.
+        # Every surface here reports progress through its own hook
+        # (progress_hooks), so yt-dlp's own display is redundant anyway.
+        "noprogress": True,
         # A video ID carrying list= (e.g. YouTube's auto "Radio" mixes)
         # would otherwise make yt-dlp try to resolve a dynamically
         # generated playlist, which can hang for a long time.

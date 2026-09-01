@@ -154,15 +154,21 @@ def extract_frames_from_file(
     scene_threshold: float | None = None,
     start: float | None = None,
     end: float | None = None,
-    max_frames: int = DEFAULT_MAX_FRAMES,
-    width: int = DEFAULT_WIDTH,
+    max_frames: int | None = None,
+    width: int | None = None,
+    settings=None,
 ) -> FrameSet:
     """Sample frames out of a local video file.
 
     Mode is chosen by argument: scene_threshold -> scene detection,
-    otherwise a fixed interval (defaulting to one frame per 10s, or a
-    tighter spacing when an explicit short range is given).
+    otherwise a fixed interval (defaulting to the configured spacing, or
+    a tighter one when an explicit short range is given).
     """
+    from .config import load_settings
+
+    settings = settings or load_settings()
+    max_frames = max_frames if max_frames is not None else settings.frame_max
+    width = width if width is not None else settings.frame_width
     video_path = Path(video_path)
     if not video_path.exists():
         raise EngineError(f"No such video file: {video_path}")
@@ -189,7 +195,7 @@ def extract_frames_from_file(
         if duration is not None and duration <= 120:
             interval = max(0.5, duration / min(max_frames, 12))
         else:
-            interval = DEFAULT_INTERVAL_SECONDS
+            interval = settings.frame_interval_seconds
 
     scale = f"scale={width}:-2"
     args: list[str] = [str(ffmpeg), "-hide_banner", "-loglevel", "info", "-y"]
@@ -260,20 +266,32 @@ def extract_frames(
     scene_threshold: float | None = None,
     start: float | None = None,
     end: float | None = None,
-    max_frames: int = DEFAULT_MAX_FRAMES,
-    width: int = DEFAULT_WIDTH,
-    height: int | None = DEFAULT_FRAME_HEIGHT,
+    max_frames: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
     output_dir: Path | None = None,
     js_runtime_path: str | None = None,
     ffmpeg_location: str | None = None,
     on_status: "callable | None" = None,
+    settings=None,
 ) -> FrameSet:
     """Frames from either a YouTube URL or a local file path.
 
     For a URL, the video is downloaded into the shared agent cache
     (download.ensure_local_media) so a later transcript/frames call on the
     same video reuses it instead of re-fetching.
+
+    max_frames/width/height default to None rather than to constants so
+    an unset argument falls through to the user's configured value --
+    a hard-coded default in the signature would silently outrank the
+    settings file.
     """
+    from .config import load_settings
+
+    settings = settings or load_settings()
+    max_frames = max_frames if max_frames is not None else settings.frame_max
+    width = width if width is not None else settings.frame_width
+    height = height if height is not None else settings.frame_download_height
     # Local file: no network at all.
     candidate = Path(target)
     if candidate.exists() and candidate.is_file():
@@ -313,12 +331,13 @@ def extract_frames(
         js_runtime_path=js_runtime_path,
         ffmpeg_location=ffmpeg_location,
         on_progress=(lambda pct, text: on_status(text)) if on_status else None,
+        settings=settings,
     )
     if on_status:
         on_status("Extracting frames…")
     return extract_frames_from_file(
         media,
-        output_dir or cache_dir_for(video_id) / "frames",
+        output_dir or cache_dir_for(video_id, settings) / "frames",
         interval=interval,
         scene_threshold=scene_threshold,
         start=start,

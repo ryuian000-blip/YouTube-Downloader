@@ -78,6 +78,31 @@ stdout; progress goes to stderr.
 
 Timestamps accept `4:10`, `1:02:03`, `250`, or `2m30s`.
 
+## Defaults are the user's, not yours
+
+Quality, destination folder, frame counts, and any size/duration limits
+all come from the user's settings. **Don't assume — check.**
+
+```bash
+.venv/Scripts/python.exe ytdl_cli.py config show
+```
+
+(Or the `get_settings` MCP tool.) It reports every value and which layer
+it came from.
+
+- Omitting an argument uses their configured value. Pass one explicitly
+  only to override a *single* call, and say so when you do.
+- Downloads cap at `max_height` (1080p unless they changed it), so
+  "download this" does not mean "fetch 4K" by default. If they ask for
+  maximum quality, pass it explicitly for that call.
+- Files go to `download_dir` — the same folder the desktop app uses.
+  Report the actual path back; don't say "your Downloads folder" unless
+  you've confirmed that's where it went.
+- If a download is refused for exceeding a limit, the error names the
+  setting. Relay that and let them decide — **don't change their
+  settings for them.** Lasting changes are theirs to make:
+  `ytdl_cli.py config set <key>=<value>`.
+
 ## Judgment calls
 
 **Read frames, don't skim them.** Five frames you actually look at beat

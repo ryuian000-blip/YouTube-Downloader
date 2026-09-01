@@ -14,10 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+from .config import Settings, load_settings
 from .core import (
     EngineError,
     ProgressCallback,
     base_opts,
+    format_timestamp,
     resolve_runtime_paths,
     run_with_retry,
     strip_ansi,
@@ -26,6 +28,36 @@ from .info import MODE_AUDIO_ONLY, MODE_VIDEO, MODE_VIDEO_ONLY
 
 DOWNLOAD_COMPLETE_MESSAGE = "Download complete."
 ALREADY_DOWNLOADED_MESSAGE = "Already downloaded -- no new file was saved."
+
+
+def check_limits(info: dict, settings: Settings | None = None) -> None:
+    """Enforce the optional duration/size guardrails before downloading.
+
+    Both are off unless the user turns them on (see config.Settings), so
+    this is a no-op for most people. Raises EngineError naming the limit
+    and how to change it -- a refusal the user can't act on is worse than
+    no refusal.
+    """
+    settings = settings or load_settings()
+
+    limit_minutes = settings.max_duration_minutes
+    duration = info.get("duration")
+    if limit_minutes and isinstance(duration, (int, float)) and duration > limit_minutes * 60:
+        raise EngineError(
+            f"Video is {format_timestamp(duration)}, over the "
+            f"{limit_minutes}-minute limit (max_duration_minutes). "
+            "Raise or clear that setting to download it."
+        )
+
+    limit_mb = settings.max_filesize_mb
+    if limit_mb:
+        size = info.get("filesize_approx") or info.get("filesize")
+        if isinstance(size, (int, float)) and size > limit_mb * 1024 * 1024:
+            raise EngineError(
+                f"Video is about {size / (1024 * 1024):.0f}MB, over the "
+                f"{limit_mb}MB limit (max_filesize_mb). "
+                "Raise or clear that setting to download it."
+            )
 
 
 @dataclass
@@ -167,15 +199,30 @@ def download(
     options: DownloadOptions,
     on_progress: ProgressCallback | None = None,
     on_retry: ProgressCallback | None = None,
+    settings: Settings | None = None,
+    enforce_limits: bool = True,
 ) -> DownloadResult:
     """Download one video. Raises EngineError (already user-presentable)
-    after all retry attempts are exhausted."""
+    after all retry attempts are exhausted.
+
+    enforce_limits=False is for callers that already showed the user what
+    they were about to fetch and got a yes -- the GUI, where the size is
+    on screen next to the button. Agent surfaces leave it on.
+    """
+    settings = settings or load_settings()
     o = options
     o.js_runtime_path, o.ffmpeg_location = resolve_runtime_paths(
         o.js_runtime_path, o.ffmpeg_location
     )
     Path(o.output_dir).mkdir(parents=True, exist_ok=True)
     ydl_opts = build_ydl_opts(o, on_progress)
+
+    if enforce_limits and (settings.max_duration_minutes or settings.max_filesize_mb):
+        # Metadata-only pass first: refusing *after* pulling 2GB would
+        # defeat the entire point of a size limit.
+        from .info import extract_info
+
+        check_limits(extract_info(o.url, o.js_runtime_path, retry=False), settings)
 
     def _retry_notice(next_attempt: int, max_attempts: int) -> None:
         message = f"Retrying… (attempt {next_attempt} of {max_attempts})"
@@ -227,23 +274,99 @@ def download(
 # Cache (used by the CLI/MCP so transcript + frames don't fetch twice)
 # ---------------------------------------------------------------------------
 
-def cache_root() -> Path:
+def cache_root(settings: Settings | None = None) -> Path:
     """Scratch space for agent-driven work.
 
-    Deliberately the system temp dir, not the user's Downloads folder:
-    these are working copies an agent pulled to read, not files the user
-    asked to keep. The GUI's own downloads are unaffected.
+    Defaults to the system temp dir, not the user's Downloads folder:
+    these are working copies an agent pulled in order to read a video,
+    not files the user asked to keep. Override with the ``cache_dir``
+    setting if temp is small or on a slow disk. The GUI's own downloads
+    are unaffected either way.
     """
-    root = Path(tempfile.gettempdir()) / "ytdl-agent-cache"
+    settings = settings or load_settings()
+    root = (
+        Path(settings.cache_dir).expanduser()
+        if settings.cache_dir
+        else Path(tempfile.gettempdir()) / "ytdl-agent-cache"
+    )
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def cache_dir_for(video_id: str) -> Path:
+def cache_dir_for(video_id: str, settings: Settings | None = None) -> Path:
     safe = "".join(c for c in (video_id or "video") if c.isalnum() or c in "-_")[:64]
-    path = cache_root() / (safe or "video")
+    path = cache_root(settings) / (safe or "video")
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def cache_size_bytes(settings: Settings | None = None) -> int:
+    root = cache_root(settings)
+    total = 0
+    for entry in root.rglob("*"):
+        try:
+            if entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def clear_cache(settings: Settings | None = None) -> int:
+    """Delete every cached working copy. Returns bytes reclaimed."""
+    import shutil
+
+    root = cache_root(settings)
+    freed = cache_size_bytes(settings)
+    for child in root.iterdir():
+        try:
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+        except OSError:
+            continue
+    return freed
+
+
+def prune_cache(settings: Settings | None = None) -> int:
+    """Drop oldest video folders until the cache fits ``cache_max_mb``.
+
+    Without this the cache grows forever -- every video an agent ever
+    touched stays on disk. Whole per-video folders are evicted (not
+    individual files) so a partially-pruned video can't leave a video
+    file without its frames. Returns bytes freed; a None limit disables
+    pruning entirely.
+    """
+    import shutil
+
+    settings = settings or load_settings()
+    limit_mb = settings.cache_max_mb
+    if not limit_mb:
+        return 0
+    limit = limit_mb * 1024 * 1024
+    total = cache_size_bytes(settings)
+    if total <= limit:
+        return 0
+
+    root = cache_root(settings)
+    folders = []
+    for child in root.iterdir():
+        try:
+            if child.is_dir():
+                size = sum(f.stat().st_size for f in child.rglob("*") if f.is_file())
+                folders.append((child.stat().st_mtime, size, child))
+        except OSError:
+            continue
+    folders.sort(key=lambda item: item[0])  # oldest first
+
+    freed = 0
+    for _mtime, size, folder in folders:
+        if total - freed <= limit:
+            break
+        try:
+            shutil.rmtree(folder)
+            freed += size
+        except OSError:
+            continue
+    return freed
 
 
 def cached_media(video_id: str, suffixes: tuple[str, ...]) -> Path | None:
@@ -265,9 +388,11 @@ def ensure_local_media(
     js_runtime_path: str | None = None,
     ffmpeg_location: str | None = None,
     on_progress: ProgressCallback | None = None,
+    settings: Settings | None = None,
 ) -> Path:
     """Download into the agent cache unless a usable copy is already
     there. Returns the media path."""
+    settings = settings or load_settings()
     video_suffixes = (".mp4", ".mkv", ".webm")
     audio_suffixes = (".m4a", ".mp3", ".wav", ".opus", ".webm")
     suffixes = audio_suffixes if mode == MODE_AUDIO_ONLY else video_suffixes
@@ -284,13 +409,18 @@ def ensure_local_media(
             audio_format=audio_format,
             include_subtitles=False,
             embed_thumbnail=False,
-            output_dir=cache_dir_for(video_id),
+            output_dir=cache_dir_for(video_id, settings),
             ffmpeg_location=ffmpeg_location,
             js_runtime_path=js_runtime_path,
             force_overwrite=False,
         ),
         on_progress=on_progress,
+        settings=settings,
     )
+    # Prune AFTER writing, not before: evicting to make room for a file
+    # whose real size isn't known yet would be guesswork, and the newest
+    # folder (this one) is last to be evicted anyway.
+    prune_cache(settings)
     if result.path and Path(result.path).exists():
         return Path(result.path)
     fallback = cached_media(video_id, suffixes)

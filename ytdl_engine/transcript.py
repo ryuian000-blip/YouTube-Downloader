@@ -310,19 +310,29 @@ def transcribe_audio_file(
 
 def get_transcript(
     url: str,
-    lang: str = "en",
+    lang: str | None = None,
     force_whisper: bool = False,
-    whisper_model: str = DEFAULT_WHISPER_MODEL,
+    whisper_model: str | None = None,
     js_runtime_path: str | None = None,
     ffmpeg_location: str | None = None,
     on_status: "callable | None" = None,
+    settings=None,
 ) -> Transcript:
     """Timestamped transcript for a YouTube URL.
 
     Captions when available (instant), local Whisper otherwise. Raises
     EngineError with an actionable message if neither path can produce
     anything.
+
+    lang/whisper_model default to None so an unset argument falls through
+    to the user's configured value rather than to a constant baked into
+    this signature.
     """
+    from .config import load_settings
+
+    settings = settings or load_settings()
+    lang = lang if lang is not None else settings.transcript_language
+    whisper_model = whisper_model if whisper_model is not None else settings.whisper_model
     js_runtime_path, ffmpeg_location = resolve_runtime_paths(
         js_runtime_path, ffmpeg_location
     )
@@ -346,6 +356,14 @@ def get_transcript(
                 duration_seconds=duration,
             )
 
+    if not settings.allow_whisper:
+        # Opt-out for anyone who'd rather fail fast than spend minutes on
+        # CPU transcription -- says exactly which setting to flip.
+        raise EngineError(
+            "This video has no captions, and local transcription is turned off "
+            "(allow_whisper). Enable it to transcribe audio directly."
+        )
+
     if on_status:
         on_status(
             "No captions available — downloading audio to transcribe locally…"
@@ -361,6 +379,7 @@ def get_transcript(
         js_runtime_path=js_runtime_path,
         ffmpeg_location=ffmpeg_location,
         on_progress=(lambda pct, text: on_status(text)) if on_status else None,
+        settings=settings,
     )
     segments, detected = transcribe_audio_file(
         audio_path,

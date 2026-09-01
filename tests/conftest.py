@@ -30,6 +30,23 @@ from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    """Point every test at a throwaway settings file.
+
+    Autouse and unconditional on purpose: settings now feed the download
+    path (quality cap, guardrails, folders), so without this a developer
+    who had set, say, max_duration_minutes on their own machine would see
+    unrelated tests fail -- which is exactly what happened once. Tests
+    must not read or write the real configuration.
+    """
+    monkeypatch.setenv("YTDL_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    from ytdl_engine.config import known_fields
+
+    for name in known_fields():
+        monkeypatch.delenv(f"YTDL_{name.upper()}", raising=False)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     app = QApplication.instance() or QApplication(sys.argv)

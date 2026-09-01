@@ -259,6 +259,62 @@ dumping thousands of files.
 Videos fetched this way land in a temp cache keyed by video ID, so
 transcript-then-frames on the same video downloads it once.
 
+### Settings — quality, destination, and limits
+
+Nothing important is hard-coded. Every default lives in one settings
+file that the desktop app, the CLI, and the MCP server all read:
+
+```bash
+python ytdl_cli.py config show                  # current values + where each came from
+python ytdl_cli.py config set max_height=720    # cap agent downloads at 720p
+python ytdl_cli.py config set max_height=none   # ...or lift the cap entirely
+python ytdl_cli.py config set download_dir=D:/Videos
+python ytdl_cli.py config path                  # where the file lives
+python ytdl_cli.py config reset                 # back to defaults
+```
+
+Resolution order, highest first: **an explicit argument** (a `--quality`
+flag, the app's dropdown, an MCP tool parameter) → **an environment
+variable** (`YTDL_MAX_HEIGHT=720`, handy for one-offs and CI) → **the
+settings file** → **the built-in default**. `config show` reports which
+layer each value came from, so an env var can't silently outrank your
+file without you noticing.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `download_dir` | OS Downloads folder | Where saved videos go. **Shared with the desktop app** — pick a folder there and it's remembered, and it's where the agent saves too. |
+| `max_height` | `1080` | Quality ceiling for downloads made without an explicit quality. `none` = best available. |
+| `default_mode` / `audio_format` | `video` / `mp3` | Defaults for mode and audio conversion. |
+| `max_duration_minutes` | `none` (off) | Refuse videos longer than this, *before* downloading. |
+| `max_filesize_mb` | `none` (off) | Refuse files bigger than this, *before* downloading. |
+| `frame_interval_seconds` / `frame_max` / `frame_width` | `10` / `50` / `800` | Frame sampling spacing, cap, and image width. |
+| `frame_download_height` | `480` | Quality of the copy fetched purely to slice frames from. Raise it to read fine print. |
+| `scene_threshold` | `0.3` | Scene-change sensitivity. |
+| `transcript_language` / `whisper_model` | `en` / `small` | Caption language and local-transcription model. |
+| `allow_whisper` | `true` | Set false to fail fast on caption-less videos instead of spending minutes transcribing. |
+| `cache_dir` / `cache_max_mb` | temp dir / `5000` | Where working copies live, and when to start evicting the oldest. `none` = never evict. |
+
+Two deliberate choices worth knowing:
+
+- **Agent downloads cap at 1080p by default, not "best available."** An
+  assistant told to "download this" shouldn't quietly pull a
+  multi-gigabyte 4K file. Set `max_height=none` if you want the maximum.
+  The desktop app is unaffected — its dropdown is always an explicit
+  choice, and it still offers up to whatever the video has.
+- **The duration/size limits are off by default.** An agent only ever
+  downloads because you asked it to, so imposing a silent ceiling would
+  break legitimate use. They're there if you want a guardrail against a
+  runaway livestream. They apply to agent downloads only, never to the
+  desktop app, where the size is on screen next to the button.
+
+The working cache is capped and pruned oldest-first, so it can't grow
+forever:
+
+```bash
+python ytdl_cli.py cache show     # size, video count, current limit
+python ytdl_cli.py cache clear
+```
+
 ## Project layout
 
 ```

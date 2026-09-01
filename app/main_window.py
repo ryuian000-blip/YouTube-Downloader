@@ -44,6 +44,7 @@ from app.widgets import (
     UrlLineEdit,
     set_role,
 )
+from ytdl_engine.config import load_settings, update_settings
 from app.workers import (
     MODE_AUDIO_ONLY,
     MODE_VIDEO,
@@ -85,7 +86,10 @@ class MainWindow(QMainWindow):
         self.resize(560, 640)
 
         self._binary_status = binaries.detect()
-        self._output_dir = Path.home() / "Downloads"
+        # From the shared settings file (see ytdl_engine.config), so the
+        # folder chosen last time is still selected next launch, and the
+        # CLI/MCP surfaces save to the same place.
+        self._output_dir = load_settings().resolved_download_dir()
         self._video_info: VideoInfo | None = None
         self._last_download_options: DownloadOptions | None = None
         self._fetch_worker: FetchWorker | None = None
@@ -811,6 +815,15 @@ class MainWindow(QMainWindow):
         if chosen:
             self._output_dir = Path(chosen)
             self._dest_button.setPath(str(self._output_dir))
+            # Persisted, not just held in memory: this used to reset to
+            # ~/Downloads on every launch. Saved to the shared settings
+            # file, so it also becomes where CLI/MCP downloads land --
+            # one destination for the app and for anything driving it.
+            try:
+                update_settings({"download_dir": str(self._output_dir)})
+            except Exception:  # noqa: BLE001 -- a read-only disk shouldn't
+                pass          # break the picker; the choice still applies
+                              # to this session.
 
     # ------------------------------------------------------------------
     # Download

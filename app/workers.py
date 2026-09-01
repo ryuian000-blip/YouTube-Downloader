@@ -156,6 +156,12 @@ class DownloadWorker(QThread):
             result = run_download(
                 self._opts,
                 on_progress=lambda pct, text: self.progress.emit(pct, text),
+                # The duration/size guardrails exist to stop an agent
+                # pulling something huge unattended. In the GUI the user
+                # picked the quality from a dropdown and can see the size
+                # chip right next to the button -- refusing there would
+                # just be the app blocking its own user.
+                enforce_limits=False,
             )
         except EngineError as exc:
             self.failed.emit(str(exc) or "Download failed.")

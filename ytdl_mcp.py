@@ -52,6 +52,7 @@ from ytdl_engine import (  # noqa: E402
     parse_timestamp,
     search_youtube,
 )
+from ytdl_engine.config import load_settings, settings_path  # noqa: E402
 from ytdl_engine.download import download as run_download  # noqa: E402
 
 mcp = MCPServer(
@@ -72,7 +73,14 @@ mcp = MCPServer(
         "image paths with your file-reading tool.\n\n"
         "Downloading a video for the user is a separate, explicit task: use "
         "download_video for that, not as a step before transcripts or frames "
-        "(both fetch what they need on their own, into a temp cache)."
+        "(both fetch what they need on their own, into a temp cache).\n\n"
+        "Defaults (quality cap, download folder, frame and transcript "
+        "settings, optional size/duration limits) come from the user's own "
+        "configuration -- call get_settings rather than guessing where a "
+        "file will land or what quality it will be. Omitting an argument "
+        "uses their setting; pass one explicitly only to override a single "
+        "call, and point them at `ytdl_cli.py config set` for a lasting "
+        "change rather than changing it on their behalf."
     ),
 )
 
@@ -156,14 +164,17 @@ async def get_transcript_tool(
         Literal["segments", "text"],
         Field(description="'segments' for structured data, 'text' for readable lines."),
     ] = "text",
-    lang: Annotated[str, Field(description="Preferred caption language.")] = "en",
+    lang: Annotated[
+        str | None, Field(description="Preferred caption language. Omit for the configured default.")
+    ] = None,
     force_whisper: Annotated[
         bool,
         Field(description="Ignore YouTube captions and transcribe locally instead."),
     ] = False,
     whisper_model: Annotated[
-        str, Field(description="Whisper model size if local transcription runs.")
-    ] = DEFAULT_WHISPER_MODEL,
+        str | None,
+        Field(description="Whisper model size if local transcription runs. Omit for the configured default."),
+    ] = None,
 ) -> dict[str, Any]:
     transcript = await _run(
         get_transcript,
@@ -226,14 +237,17 @@ async def extract_frames_tool(
         Field(description="Scene-change sensitivity, ~0.3. Overrides interval.", gt=0, lt=1),
     ] = None,
     max_frames: Annotated[
-        int, Field(description="Maximum frames to return.", ge=1, le=200)
-    ] = DEFAULT_MAX_FRAMES,
+        int | None,
+        Field(description="Maximum frames to return. Omit for the configured default.", ge=1, le=200),
+    ] = None,
     width: Annotated[
-        int, Field(description="Frame width in pixels.", ge=160, le=1920)
-    ] = 800,
+        int | None,
+        Field(description="Frame width in pixels. Omit for the configured default.", ge=160, le=1920),
+    ] = None,
     quality: Annotated[
-        int, Field(description="Video height to download for extraction.", ge=144, le=2160)
-    ] = 480,
+        int | None,
+        Field(description="Video height to download for extraction. Omit for the configured default.", ge=144, le=2160),
+    ] = None,
 ) -> dict[str, Any]:
     frame_set = await _run(
         extract_frames,
@@ -268,30 +282,52 @@ async def download_video_tool(
     url: Annotated[str, Field(description="YouTube video URL or ID.")],
     quality: Annotated[
         int | None,
-        Field(description="Max height, e.g. 1080. Omit for best available.", ge=144, le=4320),
+        Field(
+            description=(
+                "Max height, e.g. 1080. Omit to use the user's configured "
+                "quality cap (see get_settings)."
+            ),
+            ge=144,
+            le=4320,
+        ),
     ] = None,
     mode: Annotated[
-        Literal["video", "video-only", "audio"],
+        Literal["video", "video-only", "audio"] | None,
         Field(description="'video' (with sound), 'video-only', or 'audio'."),
-    ] = "video",
+    ] = None,
     audio_format: Annotated[
-        Literal["mp3", "m4a", "wav"], Field(description="Format when mode is 'audio'.")
-    ] = "mp3",
+        Literal["mp3", "m4a", "wav"] | None,
+        Field(description="Format when mode is 'audio'."),
+    ] = None,
     output_dir: Annotated[
-        str | None, Field(description="Where to save. Defaults to the Downloads folder.")
+        str | None,
+        Field(
+            description=(
+                "Where to save. Omit to use the user's configured download "
+                "folder -- which is the same folder the desktop app saves to."
+            )
+        ),
     ] = None,
     subtitles: Annotated[bool, Field(description="Also fetch English subtitles.")] = False,
 ) -> dict[str, Any]:
+    settings = load_settings()
+    mode_map = {
+        "video": MODE_VIDEO,
+        "video-only": MODE_VIDEO_ONLY,
+        "audio": MODE_AUDIO_ONLY,
+    }
+    # Every omitted argument falls through to the user's settings, so
+    # their configured cap/folder genuinely governs what an agent does.
     target_dir = (
         Path(output_dir).expanduser().resolve()
         if output_dir
-        else Path.home() / "Downloads"
+        else settings.resolved_download_dir()
     )
     options = DownloadOptions(
         url=url,
-        mode={"video": MODE_VIDEO, "video-only": MODE_VIDEO_ONLY, "audio": MODE_AUDIO_ONLY}[mode],
-        height=quality,
-        audio_format=audio_format,
+        mode=mode_map.get(mode or "", settings.default_mode),
+        height=quality if quality is not None else settings.max_height,
+        audio_format=audio_format or settings.audio_format,
         include_subtitles=subtitles,
         embed_thumbnail=False,
         output_dir=target_dir,
@@ -299,12 +335,37 @@ async def download_video_tool(
         js_runtime_path=None,
         force_overwrite=False,
     )
-    result = await _run(run_download, options)
+    result = await _run(run_download, options, settings=settings)
     return {
         "message": result.message,
         "real_download": result.real_download,
         "path": str(result.path) if result.path else None,
         "output_dir": str(target_dir),
+        "quality_cap": options.height,
+    }
+
+
+@mcp.tool(
+    structured_output=True,
+    title="Get settings",
+    description=(
+        "The user's configured defaults: download folder, quality cap, "
+        "frame and transcript settings, and any duration/size limits.\n\n"
+        "Read this before telling the user where a file went or what "
+        "quality they'll get, instead of assuming. These are the user's "
+        "choices — you can override a single call by passing an explicit "
+        "argument, but if they want a lasting change, tell them to run "
+        "`python ytdl_cli.py config set <key>=<value>` (or pick a folder "
+        "in the desktop app) rather than changing it for them."
+    ),
+)
+async def get_settings_tool() -> dict[str, Any]:
+    settings = load_settings()
+    return {
+        "settings": settings.as_dict(),
+        "effective_download_dir": str(settings.resolved_download_dir()),
+        "settings_file": str(settings_path()),
+        "how_to_change": "python ytdl_cli.py config set max_height=720",
     }
 
 

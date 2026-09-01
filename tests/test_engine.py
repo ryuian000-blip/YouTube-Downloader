@@ -88,6 +88,20 @@ def test_format_string(mode, height, expected):
     assert format_string(mode, height) == expected
 
 
+def test_base_opts_silences_yt_dlps_own_progress_bar():
+    """quiet=True does NOT stop yt-dlp drawing its progress bar, and it
+    draws it to stdout -- which broke the CLI's "JSON on stdout, nothing
+    else" contract (jq choked on ~30 progress lines before the JSON).
+    Every surface reports progress via its own hook, so yt-dlp's display
+    is redundant as well as harmful."""
+    from ytdl_engine.core import base_opts
+
+    opts = base_opts()
+    assert opts["noprogress"] is True
+    assert opts["quiet"] is True
+    assert opts["no_color"] is True
+
+
 def test_available_heights_ignores_audio_only_formats():
     info = {
         "formats": [

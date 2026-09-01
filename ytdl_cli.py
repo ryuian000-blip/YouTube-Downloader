@@ -45,6 +45,14 @@ from ytdl_engine import (  # noqa: E402
     parse_timestamp,
     search_youtube,
 )
+from ytdl_engine.config import (  # noqa: E402
+    describe_sources,
+    known_fields,
+    load_settings,
+    settings_path,
+    update_settings,
+)
+from ytdl_engine.download import cache_root, cache_size_bytes, clear_cache  # noqa: E402
 from ytdl_engine.download import download as run_download  # noqa: E402
 
 
@@ -83,18 +91,30 @@ def cmd_info(args) -> None:
 
 
 def cmd_download(args) -> None:
-    mode = {
+    settings = load_settings()
+    mode_map = {
         "video": MODE_VIDEO,
         "video-only": MODE_VIDEO_ONLY,
         "audio": MODE_AUDIO_ONLY,
-    }[args.mode]
-    output_dir = Path(args.dir).expanduser().resolve() if args.dir else Path.cwd()
+    }
+    # Unset flags fall through to the user's settings rather than to
+    # argparse defaults, so `config set` genuinely governs behaviour.
+    mode = mode_map[args.mode] if args.mode else settings.default_mode
+    if mode not in mode_map.values():
+        mode = MODE_VIDEO
+    quality = args.quality if args.quality is not None else settings.max_height
+    audio_format = args.audio_format or settings.audio_format
+    output_dir = (
+        Path(args.dir).expanduser().resolve()
+        if args.dir
+        else settings.resolved_download_dir()
+    )
     result = run_download(
         DownloadOptions(
             url=args.url,
             mode=mode,
-            height=args.quality,
-            audio_format=args.audio_format,
+            height=quality,
+            audio_format=audio_format,
             include_subtitles=args.subtitles,
             embed_thumbnail=False,
             output_dir=output_dir,
@@ -103,6 +123,7 @@ def cmd_download(args) -> None:
             force_overwrite=args.overwrite,
         ),
         on_progress=lambda pct, text: status(text),
+        settings=settings,
     )
     emit(
         {
@@ -111,6 +132,7 @@ def cmd_download(args) -> None:
             "real_download": result.real_download,
             "path": str(result.path) if result.path else None,
             "output_dir": str(output_dir),
+            "quality_cap": quality,
         }
     )
 
@@ -162,6 +184,86 @@ def cmd_frames(args) -> None:
         on_status=status,
     )
     emit({"ok": True, **frame_set.as_dict()})
+
+
+def cmd_config(args) -> None:
+    """Show or change the settings every surface reads."""
+    if args.action == "path":
+        emit({"ok": True, "path": str(settings_path()), "exists": settings_path().exists()})
+
+    if args.action == "reset":
+        target = settings_path()
+        if target.exists():
+            target.unlink()
+        emit({"ok": True, "message": "Settings reset to defaults.", "path": str(target)})
+
+    if args.action == "set":
+        if not args.assignments:
+            fail("Nothing to set. Use: config set max_height=720 download_dir=D:/Videos")
+        changes: dict = {}
+        for item in args.assignments:
+            if "=" not in item:
+                fail(f"Expected key=value, got {item!r}.")
+            key, _, value = item.partition("=")
+            changes[key.strip()] = value.strip()
+        try:
+            updated = update_settings(changes)
+        except KeyError as exc:
+            # exc.args[0], not str(exc): KeyError stringifies with the
+            # message wrapped in quotes, which reads as a typo in output.
+            fail(exc.args[0] if exc.args else "Unknown setting.")
+        except (TypeError, ValueError) as exc:
+            fail(f"Invalid value: {exc}")
+        emit(
+            {
+                "ok": True,
+                "message": f"Updated {', '.join(sorted(changes))}.",
+                "path": str(settings_path()),
+                "settings": updated.as_dict(),
+            }
+        )
+
+    # show (default)
+    settings = load_settings()
+    emit(
+        {
+            "ok": True,
+            "path": str(settings_path()),
+            "exists": settings_path().exists(),
+            "settings": settings.as_dict(),
+            # Which layer each value came from, so it's obvious when an
+            # env var is quietly overriding the file.
+            "sources": describe_sources(),
+            "effective_download_dir": str(settings.resolved_download_dir()),
+        }
+    )
+
+
+def cmd_cache(args) -> None:
+    """Inspect or empty the working cache of videos fetched for
+    transcripts/frames."""
+    settings = load_settings()
+    root = cache_root(settings)
+    if args.action == "clear":
+        freed = clear_cache(settings)
+        emit(
+            {
+                "ok": True,
+                "message": f"Cleared {freed / (1024 * 1024):.1f} MB.",
+                "path": str(root),
+            }
+        )
+    size = cache_size_bytes(settings)
+    videos = [p.name for p in root.iterdir() if p.is_dir()] if root.exists() else []
+    emit(
+        {
+            "ok": True,
+            "path": str(root),
+            "size_mb": round(size / (1024 * 1024), 1),
+            "limit_mb": settings.cache_max_mb,
+            "cached_videos": len(videos),
+        }
+    )
 
 
 def cmd_doctor(args) -> None:
@@ -220,10 +322,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("download", help="Download a video or its audio.")
     p.add_argument("url")
     p.add_argument("--quality", type=int, default=None,
-                   help="Max height, e.g. 1080. Omit for best available.")
-    p.add_argument("--mode", choices=["video", "video-only", "audio"], default="video")
-    p.add_argument("--audio-format", default="mp3", choices=["mp3", "m4a", "wav"])
-    p.add_argument("--dir", default=None, help="Output directory (default: cwd).")
+                   help="Max height, e.g. 1080. Default: the max_height setting.")
+    p.add_argument("--mode", choices=["video", "video-only", "audio"], default=None,
+                   help="Default: the default_mode setting.")
+    p.add_argument("--audio-format", default=None, choices=["mp3", "m4a", "wav"],
+                   help="Default: the audio_format setting.")
+    p.add_argument("--dir", default=None,
+                   help="Output directory. Default: the download_dir setting.")
     p.add_argument("--subtitles", action="store_true", help="Also fetch English subtitles.")
     p.add_argument("--overwrite", action="store_true",
                    help="Redownload even if the file already exists.")
@@ -262,6 +367,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("doctor", help="Check binaries and dependencies are all present.")
     p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser(
+        "config",
+        help="Show or change settings (quality cap, download folder, limits...).",
+        description=(
+            "Settings resolve as: explicit flag > environment variable "
+            "(YTDL_<NAME>) > settings file > built-in default.\n\n"
+            "Settings: " + ", ".join(known_fields())
+        ),
+    )
+    p.add_argument("action", nargs="?", default="show",
+                   choices=["show", "set", "path", "reset"])
+    p.add_argument("assignments", nargs="*",
+                   help="For 'set': key=value pairs, e.g. max_height=720. "
+                        "Use 'none' to clear a limit.")
+    p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser(
+        "cache", help="Show or clear the working cache of fetched videos."
+    )
+    p.add_argument("action", nargs="?", default="show", choices=["show", "clear"])
+    p.set_defaults(func=cmd_cache)
 
     return parser
 
