@@ -138,9 +138,15 @@ technical terms are the usual casualties. If a quote looks wrong or
 matters a lot, pull frames at that timestamp — the word is often on
 screen. `--force-whisper` gets a second opinion but is much slower.
 
+**Warn before slow transcripts.** `info` returns `transcript_cost`. If
+it says slow, the video has no captions and the audio gets transcribed on
+the user's own machine — minutes of work, plus a one-time speech-model
+download of a few hundred MB. Say so before you start; otherwise it just
+looks like you've frozen.
+
 **No captions and no `faster-whisper` installed** → transcript fails with
-a message saying so. `pip install faster-whisper` fixes it; first run
-also downloads the model, so warn the user it'll take a few minutes.
+a message saying so. `pip install faster-whisper` fixes it (the shipped
+app's `ytdl-agent` reports this under `doctor`).
 
 **Downloads failing with 403** → run `doctor`. Almost always either
 `yt-dlp-ejs` missing or a stale yt-dlp; YouTube changes break old builds.

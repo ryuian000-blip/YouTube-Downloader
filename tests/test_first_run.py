@@ -178,3 +178,25 @@ def test_agent_entry_help_mentions_how_to_connect(capsys):
     out = capsys.readouterr().out
     assert "claude mcp add" in out, "help should show the one command that matters"
     assert "setup" in out
+
+
+# ---------------------------------------------------------------------------
+# Warning the user before a slow transcript
+# ---------------------------------------------------------------------------
+
+def test_info_flags_a_video_with_captions_as_fast():
+    from ytdl_engine.info import summarize_info
+
+    payload = summarize_info({"id": "x", "automatic_captions": {"en": [{"ext": "json3"}]}})
+    assert payload["transcript_cost"].startswith("fast")
+
+
+def test_info_warns_when_a_transcript_will_need_local_work():
+    """Without this the caller can't distinguish seconds from minutes,
+    and a silent multi-minute model download reads as a hang."""
+    from ytdl_engine.info import summarize_info
+
+    payload = summarize_info({"id": "x"})
+    cost = payload["transcript_cost"]
+    assert cost.startswith("slow")
+    assert "model" in cost, "should mention the one-time model download"

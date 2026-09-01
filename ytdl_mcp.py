@@ -128,10 +128,12 @@ async def search_youtube_tool(
     description=(
         "Metadata for one YouTube video: title, channel, duration, chapters, "
         "available quality levels, and whether captions exist. Cheap and "
-        "fast. Worth calling first on an unfamiliar video — duration tells "
-        "you whether to slice the transcript, and the caption flags tell you "
-        "whether a transcript will be instant (captions) or slow (local "
-        "Whisper transcription)."
+        "fast. Worth calling first on an unfamiliar video.\n\n"
+        "Check `transcript_cost` in the result before calling "
+        "get_transcript: if it says slow, the video has no captions and "
+        "must be transcribed locally — minutes of work, plus a one-time "
+        "model download. Tell the user that's coming rather than leaving "
+        "them watching an apparent hang."
     ),
 )
 async def get_video_info_tool(

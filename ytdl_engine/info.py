@@ -225,7 +225,21 @@ def summarize_info(info: dict) -> dict:
         )
     manual = _caption_langs(info, "subtitles")
     automatic = _caption_langs(info, "automatic_captions")
+    # Stated outright rather than left to be inferred from the two
+    # caption flags: the difference is seconds versus minutes, and the
+    # slow path silently downloads a speech model the first time. A
+    # caller that knows this up front can warn the user instead of
+    # appearing to hang.
+    if manual or automatic:
+        transcript_cost = "fast — this video has captions"
+    else:
+        transcript_cost = (
+            "slow — no captions, so audio must be transcribed locally "
+            "(minutes; the first run also downloads a speech model, "
+            "a few hundred MB)"
+        )
     return {
+        "transcript_cost": transcript_cost,
         "id": info.get("id"),
         "title": info.get("title") or "Untitled video",
         "url": info.get("webpage_url") or info.get("original_url"),
