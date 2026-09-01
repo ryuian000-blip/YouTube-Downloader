@@ -200,3 +200,54 @@ def test_info_warns_when_a_transcript_will_need_local_work():
     cost = payload["transcript_cost"]
     assert cost.startswith("slow")
     assert "model" in cost, "should mention the one-time model download"
+
+
+# ---------------------------------------------------------------------------
+# Output encoding
+# ---------------------------------------------------------------------------
+
+def test_cli_emits_utf8_even_under_a_legacy_console_codepage(tmp_path):
+    """Windows consoles default to a legacy codepage, and Python encodes
+    stdout with it -- so any video whose title or description contained a
+    character outside it (em dashes, emoji, non-Latin scripts) raised
+    UnicodeEncodeError mid-write and killed the command. The JSON
+    contract must not depend on regional settings.
+    """
+    import json
+    import os
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    repo = _Path(__file__).resolve().parent.parent
+    settings_file = tmp_path / "settings.json"
+    # A folder name full of characters cp1252 cannot represent.
+    settings_file.write_text(
+        json.dumps({"download_dir": "D:/Vidéos/日本語/–emdash"}), encoding="utf-8"
+    )
+
+    env = dict(os.environ)
+    env["YTDL_SETTINGS_FILE"] = str(settings_file)
+    env["PYTHONIOENCODING"] = "cp1252"  # reproduce the failing condition
+
+    proc = subprocess.run(
+        [_sys.executable, str(repo / "ytdl_cli.py"), "config", "show"],
+        capture_output=True,
+        env=env,
+        cwd=str(repo),
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    payload = json.loads(proc.stdout.decode("utf-8"))
+    assert "日本語" in payload["settings"]["download_dir"]
+
+
+def test_force_utf8_is_safe_when_streams_cannot_be_reconfigured(monkeypatch):
+    """A frozen windowed process has no real stdio; this must not raise."""
+    import ytdl_cli
+
+    class Dumb:
+        pass
+
+    monkeypatch.setattr(ytdl_cli.sys, "stdout", Dumb())
+    monkeypatch.setattr(ytdl_cli.sys, "stderr", Dumb())
+    ytdl_cli._force_utf8_stdio()

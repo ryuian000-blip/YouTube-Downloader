@@ -56,6 +56,28 @@ from ytdl_engine.download import cache_root, cache_size_bytes, clear_cache  # no
 from ytdl_engine.download import download as run_download  # noqa: E402
 
 
+def _force_utf8_stdio() -> None:
+    """Write UTF-8 regardless of the console's codepage.
+
+    Windows consoles default to a legacy codepage (cp1252 here), and
+    Python encodes stdout with it. Any video whose title or description
+    contains a character outside that codepage -- em dashes, emoji,
+    non-Latin scripts, i.e. an enormous share of YouTube -- raised
+    UnicodeEncodeError mid-write and took the whole command down. The
+    JSON contract can't depend on the user's regional settings.
+
+    errors="replace" so a stray unencodable byte degrades one character
+    rather than failing the command.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            # Not a reconfigurable text stream (redirected, or a frozen
+            # windowed process with no real stdio) -- nothing to do.
+            pass
+
+
 def emit(payload: dict, exit_code: int = 0) -> None:
     """The single stdout writer. `ensure_ascii=False` so transcripts keep
     their real characters instead of \\uXXXX noise."""
@@ -513,6 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    _force_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         args.func(args)
