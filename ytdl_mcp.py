@@ -84,7 +84,9 @@ mcp = MCPServer(
         "file will land or what quality it will be. Omitting an argument "
         "uses their setting; pass one explicitly only to override a single "
         "call, and point them at `ytdl_cli.py config set` for a lasting "
-        "change rather than changing it on their behalf."
+        "change -- or use update_settings when they ask for one. Settings "
+        "are shared with the desktop app's Settings page, so a change made "
+        "either way shows up in both."
     ),
 )
 
@@ -427,7 +429,88 @@ async def get_settings_tool() -> dict[str, Any]:
         "settings": settings.as_dict(),
         "effective_download_dir": str(settings.resolved_download_dir()),
         "settings_file": str(settings_path()),
-        "how_to_change": "python ytdl_cli.py config set max_height=720",
+        "how_to_change": (
+            "Call update_settings, or tell the user they can change these in "
+            "the app's Settings page (gear icon) or with "
+            "`ytdl-agent config set <key>=<value>`."
+        ),
+    }
+
+
+# Changing this would let an assistant switch off the very prompt that
+# exists to get the user's agreement before the first download. It is
+# settable by the user -- in the app, on the CLI, or by actually
+# confirming -- and by nothing else.
+_USER_ONLY_SETTINGS = {"defaults_confirmed"}
+
+
+@mcp.tool(
+    structured_output=True,
+    title="Update settings",
+    description=(
+        "Change the user's saved defaults — download folder, quality cap, "
+        "size/duration limits, frame and transcript settings, cache size.\n\n"
+        "Use this when the user asks for a lasting change ('always download "
+        "at 720p', 'save videos to D:/Videos', 'stop transcribing videos "
+        "without captions'). For a one-off, pass the argument to the "
+        "relevant tool instead of changing their configuration.\n\n"
+        "Only change what was actually asked for, and say what you changed "
+        "and what it was before — these are the user's settings on their "
+        "machine, and the same values drive the desktop app. Pass null to "
+        "clear a limit (e.g. max_height=null means best available)."
+    ),
+)
+async def update_settings_tool(
+    changes: Annotated[
+        dict[str, Any],
+        Field(
+            description=(
+                "Setting names mapped to new values, e.g. "
+                '{"max_height": 720, "download_dir": "D:/Videos"}. '
+                "Call get_settings first if you need the valid names."
+            )
+        ),
+    ],
+) -> dict[str, Any]:
+    if not changes:
+        raise _fail("No changes given.")
+
+    blocked = _USER_ONLY_SETTINGS & set(changes)
+    if blocked:
+        raise _fail(
+            f"{', '.join(sorted(blocked))} can only be set by the user — "
+            "it records that they've seen where downloads go and at what "
+            "quality. Ask them to confirm the download instead."
+        )
+
+    before = load_settings().as_dict()
+    unknown = [key for key in changes if key not in before]
+    if unknown:
+        raise _fail(
+            f"Unknown setting(s): {', '.join(sorted(unknown))}. "
+            f"Valid names: {', '.join(sorted(before))}"
+        )
+
+    try:
+        updated = await _run(update_settings, changes)
+    except ToolError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise _fail(f"Couldn't save settings: {exc}") from exc
+
+    after = updated.as_dict()
+    return {
+        "changed": {
+            key: {"from": before.get(key), "to": after.get(key)}
+            for key in changes
+            if before.get(key) != after.get(key)
+        },
+        "unchanged": [key for key in changes if before.get(key) == after.get(key)],
+        "settings": after,
+        "effective_download_dir": str(updated.resolved_download_dir()),
+        "note": (
+            "These also apply to the desktop app. Tell the user what changed."
+        ),
     }
 
 

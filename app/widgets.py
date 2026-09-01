@@ -1240,6 +1240,8 @@ class IconButton(QAbstractButton):
             icons.draw_refresh(p, glyph_rect, glyph_color)
         elif self._glyph == "close":
             icons.draw_close(p, glyph_rect, glyph_color)
+        elif self._glyph == "gear":
+            icons.draw_gear(p, glyph_rect, glyph_color)
         p.end()
 
 

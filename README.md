@@ -266,8 +266,8 @@ A fresh checkout has no `ffmpeg`/`ffprobe`/`deno` (they're gitignored);
 missing.
 
 Either way Claude gets `search_youtube`, `get_video_info`,
-`get_transcript`, `extract_frames`, `download_video`, `get_settings`, and
-`check_setup`. The repo also ships
+`get_transcript`, `extract_frames`, `download_video`, `get_settings`,
+`update_settings`, and `check_setup`. The repo also ships
 `.claude/skills/youtube-video/SKILL.md`, which teaches the workflow (and
 the CLI fallback) to any Claude Code session opened here.
 
@@ -311,8 +311,15 @@ transcript-then-frames on the same video downloads it once.
 
 ### Settings — quality, destination, and limits
 
-Nothing important is hard-coded. Every default lives in one settings
-file that the desktop app, the CLI, and the MCP server all read:
+Nothing important is hard-coded, and there are three ways to change the
+same settings — they all write one file that the desktop app, the CLI,
+and the MCP server read:
+
+- **In the app** — the gear icon opens a Settings page (a page, not a
+  dialog; this app has no secondary windows).
+- **By asking Claude** — "always download at 720p", "save videos to
+  D:/Videos". It reports what changed and what it was before.
+- **On the command line**:
 
 ```bash
 python ytdl_cli.py config show                  # current values + where each came from
@@ -381,6 +388,7 @@ app/theme_manager.py          thin wrapper around the (fixed, dark-only) color t
 app/widgets.py                custom-painted animated buttons, radios, checkboxes, progress bar
 app/main_window.py            the one window: all cards, layout, reveal animation
 app/splash.py                 animated splash screen
+app/settings_view.py          the Settings page (stack page 2): shared settings, edited in-app
 app/binaries.py               re-export of ytdl_engine.binaries (kept as the GUI's import surface)
 app/workers.py                QThread wrappers over ytdl_engine: fetch metadata, run the download
 ytdl_engine/                  headless engine -- no Qt. All the YouTube-fragile logic lives here,

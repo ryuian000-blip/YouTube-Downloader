@@ -33,10 +33,13 @@ Happy with the defaults? Accept them:
 ytdl-agent setup --confirm
 ```
 
-Want different ones:
+Want different ones, three ways — all the same settings:
+
+- **In the app**: click the gear icon, top right.
+- **Here**: `ytdl-agent config set download_dir="D:/Videos" max_height=720`
+- **Just ask Claude**: "always download at 720p", "save videos to D:/Videos"
 
 ```
-ytdl-agent config set download_dir="D:/Videos" max_height=720
 ytdl-agent config show
 ```
 

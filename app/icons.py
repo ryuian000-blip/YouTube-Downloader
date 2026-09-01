@@ -93,6 +93,39 @@ def draw_folder(p: QPainter, rect: QRectF, color: QColor, width: float = 1.7) ->
     p.restore()
 
 
+def draw_gear(p: QPainter, rect: QRectF, color: QColor, width: float = 1.7) -> None:
+    """Settings.
+
+    Eight spokes radiating from a hub, rather than an outlined cog with
+    notched teeth: at the ~16px this is actually drawn at, real teeth
+    turn into an indistinct blob, while spokes stay legible and match the
+    stroked weight of every other icon here.
+    """
+    import math
+
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(_pen(color, width))
+    p.setBrush(Qt.NoBrush)
+
+    centre = _pt(rect, 12, 12)
+    scale_x = rect.width() / 24.0
+    scale_y = rect.height() / 24.0
+    hub = 4.0
+
+    p.drawEllipse(centre, hub * scale_x, hub * scale_y)
+
+    inner, outer = 6.6, 10.2
+    for index in range(8):
+        angle = math.radians(index * 45.0)
+        dx, dy = math.cos(angle), math.sin(angle)
+        p.drawLine(
+            QPointF(centre.x() + dx * inner * scale_x, centre.y() + dy * inner * scale_y),
+            QPointF(centre.x() + dx * outer * scale_x, centre.y() + dy * outer * scale_y),
+        )
+    p.restore()
+
+
 def draw_chevron_down(p: QPainter, rect: QRectF, color: QColor, width: float = 1.8) -> None:
     """Dropdown affordance. Callers rotate the painter to flip it open."""
     p.save()

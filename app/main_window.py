@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from app import binaries, theme
 from app.history import HistoryStore
 from app.history_view import HistoryPage
+from app.settings_view import SettingsPage
 from app.splash import SplashOverlay
 from app.theme_manager import ThemeManager
 from app.widgets import (
@@ -213,8 +214,13 @@ class MainWindow(QMainWindow):
         self._history_page.back_requested.connect(lambda: self._stack.setCurrentIndex(0))
         self._history_page.redownload_requested.connect(self._on_history_redownload)
 
-        self._stack.addWidget(self._page_content)  # index 0
-        self._stack.addWidget(self._history_page)  # index 1
+        self._settings_page = SettingsPage(self._theme_manager.colors(), self)
+        self._settings_page.back_requested.connect(lambda: self._stack.setCurrentIndex(0))
+        self._settings_page.download_dir_changed.connect(self._on_download_dir_changed)
+
+        self._stack.addWidget(self._page_content)   # index 0
+        self._stack.addWidget(self._history_page)   # index 1
+        self._stack.addWidget(self._settings_page)  # index 2
         self._stack.setCurrentIndex(0)
 
     def _revealable(self) -> list[QWidget]:
@@ -270,6 +276,11 @@ class MainWindow(QMainWindow):
         self._history_btn.setToolTip("Download history")
         self._animated_widgets.append(self._history_btn)
         row.addWidget(self._history_btn)
+
+        self._settings_btn = IconButton("gear", diameter=38)
+        self._settings_btn.setToolTip("Settings")
+        self._animated_widgets.append(self._settings_btn)
+        row.addWidget(self._settings_btn)
 
         layout.addLayout(row)
 
@@ -465,6 +476,7 @@ class MainWindow(QMainWindow):
         self._download_btn.clicked.connect(self._on_download_clicked)
         self._mode_control.selectionChanged.connect(lambda *_: self._on_mode_changed())
         self._history_btn.clicked.connect(self._on_show_history)
+        self._settings_btn.clicked.connect(self._on_show_settings)
         # The resolution and size chips describe the *selected* quality, so
         # they have to be recomputed whenever that selection moves.
         self._quality_combo.currentIndexChanged.connect(lambda *_: self._refresh_chips())
@@ -996,6 +1008,19 @@ class MainWindow(QMainWindow):
     def _on_show_history(self) -> None:
         self._history_page.reload()
         self._stack.setCurrentIndex(1)
+
+    def _on_show_settings(self) -> None:
+        # reload() on every visit, not just at construction: settings are
+        # shared, so the CLI or an assistant may have changed them since
+        # this page was last shown.
+        self._settings_page.reload()
+        self._stack.setCurrentIndex(2)
+
+    def _on_download_dir_changed(self, path: str) -> None:
+        """Keep the main page's destination in step with the settings
+        page -- they're two views of one shared setting."""
+        self._output_dir = Path(path)
+        self._dest_button.setPath(path)
 
     def _on_history_redownload(self, url: str) -> None:
         self._stack.setCurrentIndex(0)

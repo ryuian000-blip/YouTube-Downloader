@@ -28,8 +28,9 @@ reuse. Only use `download` when the user actually wants the file kept.
 ## If the MCP server is registered (preferred)
 
 Use the tools directly: `search_youtube`, `get_video_info`,
-`get_transcript`, `extract_frames`, `download_video`, `check_setup`.
-They're typed and self-describing. Everything below is the fallback.
+`get_transcript`, `extract_frames`, `download_video`, `get_settings`,
+`update_settings`, `check_setup`. They're typed and self-describing.
+Everything below is the fallback.
 
 ## CLI fallback
 
@@ -116,9 +117,13 @@ it came from.
   Report the actual path back; don't say "your Downloads folder" unless
   you've confirmed that's where it went.
 - If a download is refused for exceeding a limit, the error names the
-  setting. Relay that and let them decide — **don't change their
-  settings for them.** Lasting changes are theirs to make:
-  `ytdl_cli.py config set <key>=<value>`.
+  setting. Relay it and let them decide.
+- **When they ask for a lasting change** ("always use 720p", "save to
+  D:/Videos"), use `update_settings` — then tell them what changed and
+  what it was before. Change only what they asked for; don't quietly
+  adjust anything else. They can also do it themselves in the app's
+  Settings page (gear icon) or with `ytdl-agent config set <key>=<value>`,
+  and all three write the same file.
 
 ## Judgment calls
 

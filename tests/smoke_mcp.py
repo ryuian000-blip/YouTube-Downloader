@@ -21,6 +21,7 @@ from mcp.client.stdio import stdio_client  # noqa: E402
 
 EXPECTED_TOOLS = {
     "get_settings_tool",
+    "update_settings_tool",
     "search_youtube_tool",
     "get_video_info_tool",
     "get_transcript_tool",
