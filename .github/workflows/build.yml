@@ -4,6 +4,12 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Pushing a v* tag additionally publishes a GitHub Release (see the
+    # `release` job). Without one, the only way to get the app was a CI
+    # artifact -- which requires being SIGNED IN to GitHub to download and
+    # expires after 90 days, so anyone you shared it with hit a login wall
+    # before they ever saw the app.
+    tags: ["v*"]
 
 jobs:
   build-windows:
@@ -44,6 +50,18 @@ jobs:
 
       - name: Build with PyInstaller
         run: pyinstaller build.spec
+
+      - name: Add the user-facing docs
+        # Copied to the TOP of the app folder, not bundled as PyInstaller
+        # datas: in a onedir build those land inside _internal/, where a
+        # user will never look. Windows previously shipped with no
+        # instructions at all -- just an unsigned exe and a SmartScreen
+        # warning -- while macOS got a Gatekeeper guide.
+        shell: pwsh
+        run: |
+          Copy-Item "README.md" "dist/YouTube Downloader/"
+          Copy-Item "CONNECT-TO-CLAUDE.md" "dist/YouTube Downloader/"
+          Copy-Item "How To Open YouTube Downloader (Windows).html" "dist/YouTube Downloader/"
 
       - name: Zip the build
         # actions/upload-artifact treats a directory path as the archive
@@ -165,6 +183,8 @@ jobs:
           mkdir dist/stage
           mv "dist/YouTube Downloader.app" dist/stage/
           cp "How To Open YouTube Downloader.html" dist/stage/
+          cp "CONNECT-TO-CLAUDE.md" dist/stage/
+          cp "README.md" dist/stage/
           ditto -c -k dist/stage "dist/YouTube Downloader-macos.zip"
 
       - name: Upload artifact
@@ -172,3 +192,49 @@ jobs:
         with:
           name: YouTube-Downloader-macos
           path: dist/YouTube Downloader-macos.zip
+
+  release:
+    # Only for tag pushes. Turns the two build artifacts into a public
+    # GitHub Release, so the download link works for anyone -- no GitHub
+    # account, no expiry.
+    #
+    # Cut one with:  git tag v1.0.0 && git push origin v1.0.0
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download both builds
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+          body: |
+            ## Download
+
+            - **Windows** — `YouTube Downloader-windows.zip`
+              Unzip, keep the folder together, run `YouTube Downloader.exe`.
+              Windows shows an "unrecognised app" warning the first time:
+              More info → Run anyway. (`How To Open ... (Windows).html` is in the zip.)
+
+            - **macOS (Apple Silicon)** — `YouTube Downloader-macos.zip`
+              Unzip and drag the app to Applications. macOS blocks it on first
+              open: System Settings → Privacy & Security → **Open Anyway**.
+              (`How To Open YouTube Downloader.html` is in the zip.)
+
+            Both include everything needed — no Python, no ffmpeg install.
+
+            ## Letting Claude watch videos
+
+            Each download also contains `ytdl-agent`, which connects the app to
+            Claude Code so it can read transcripts and look at frames from a
+            video. Run `ytdl-agent setup`, then follow `CONNECT-TO-CLAUDE.md`
+            (included).

@@ -52,7 +52,11 @@ from ytdl_engine import (  # noqa: E402
     parse_timestamp,
     search_youtube,
 )
-from ytdl_engine.config import load_settings, settings_path  # noqa: E402
+from ytdl_engine.config import (  # noqa: E402
+    load_settings,
+    settings_path,
+    update_settings,
+)
 from ytdl_engine.download import download as run_download  # noqa: E402
 
 mcp = MCPServer(
@@ -275,7 +279,11 @@ async def extract_frames_tool(
         "user keeps. Use this when the user actually wants the file — not as "
         "a setup step for get_transcript or extract_frames, which fetch what "
         "they need themselves into a temp cache.\n\n"
-        "Defaults to the user's Downloads folder. Returns the final path."
+        "Defaults to the user's configured folder. Returns the final path.\n\n"
+        "On the FIRST download this returns needs_confirmation instead of "
+        "downloading: show the user the folder and quality it reports, get "
+        "their agreement, then call again with confirmed=true. This happens "
+        "once, not every time."
     ),
 )
 async def download_video_tool(
@@ -309,6 +317,16 @@ async def download_video_tool(
         ),
     ] = None,
     subtitles: Annotated[bool, Field(description="Also fetch English subtitles.")] = False,
+    confirmed: Annotated[
+        bool,
+        Field(
+            description=(
+                "Set true ONLY after the user has seen and agreed to the "
+                "download folder and quality. Required for the very first "
+                "download; ignored afterwards."
+            )
+        ),
+    ] = False,
 ) -> dict[str, Any]:
     settings = load_settings()
     mode_map = {
@@ -316,6 +334,42 @@ async def download_video_tool(
         "video-only": MODE_VIDEO_ONLY,
         "audio": MODE_AUDIO_ONLY,
     }
+
+    # First download ever: hand the defaults back to be agreed to instead
+    # of writing a file the user never chose the shape of. Structural, not
+    # advisory -- see Settings.defaults_confirmed for why this isn't just
+    # a line in the skill.
+    if not settings.defaults_confirmed and not confirmed:
+        target = (
+            Path(output_dir).expanduser().resolve()
+            if output_dir
+            else settings.resolved_download_dir()
+        )
+        cap = quality if quality is not None else settings.max_height
+        return {
+            "needs_confirmation": True,
+            "message": (
+                "First download on this machine — check these with the user "
+                "before continuing."
+            ),
+            "download_folder": str(target),
+            "quality": f"up to {cap}p" if cap else "best available",
+            "mode": mode or settings.default_mode,
+            "ask_the_user": (
+                f"I'll save this to {target} at "
+                f"{('up to ' + str(cap) + 'p') if cap else 'the best available quality'}. "
+                "Want me to go ahead, or change either of those first?"
+            ),
+            "to_proceed": (
+                "Call download_video again with confirmed=true once they agree "
+                "(this is asked once, not every download)."
+            ),
+            "to_change_first": (
+                "Different folder or quality for this one download: pass "
+                "output_dir / quality. To change it permanently: "
+                "`ytdl-agent config set download_dir=... max_height=...`"
+            ),
+        }
     # Every omitted argument falls through to the user's settings, so
     # their configured cap/folder genuinely governs what an agent does.
     target_dir = (
@@ -336,6 +390,12 @@ async def download_video_tool(
         force_overwrite=False,
     )
     result = await _run(run_download, options, settings=settings)
+    if not settings.defaults_confirmed:
+        # They've now seen the defaults and agreed, so don't ask again.
+        try:
+            update_settings({"defaults_confirmed": True})
+        except Exception:  # noqa: BLE001 -- never fail a finished download
+            pass           # over a settings write; worst case we re-ask.
     return {
         "message": result.message,
         "real_download": result.real_download,
@@ -407,5 +467,10 @@ async def check_setup_tool() -> dict[str, Any]:
     return payload
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for both `python ytdl_mcp.py` and `ytdl-agent mcp`."""
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

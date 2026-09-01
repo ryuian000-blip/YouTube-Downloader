@@ -78,9 +78,16 @@ if ! python3 -m PyInstaller build.spec; then
     pause_and_exit
 fi
 
+# Docs land beside the .app (a bundle's insides are not where anyone
+# looks), matching what CI puts in the release zip.
+cp -f "README.md" "CONNECT-TO-CLAUDE.md" "How To Open YouTube Downloader.html" dist/ 2>/dev/null || true
+
 echo
 echo "Done. The finished app is at:"
 echo "  $(pwd)/dist/YouTube Downloader.app"
+echo
+echo "It also contains ytdl-agent (Contents/MacOS/ytdl-agent), which connects"
+echo "the app to Claude Code -- see CONNECT-TO-CLAUDE.md next to the app."
 echo
 echo "First launch on a Mac other than this one will need a right-click >"
 echo "Open (not a double-click) -- see README.md's macOS section for why."

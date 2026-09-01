@@ -266,37 +266,148 @@ def cmd_cache(args) -> None:
     )
 
 
-def cmd_doctor(args) -> None:
-    """Environment check -- the first thing to run when something breaks."""
+def _install_hint(name: str) -> str:
+    """Exactly what to run to get a missing binary, on THIS platform.
+
+    A diagnostic that says "ffmpeg not found" and stops just relocates
+    the problem to a search engine.
+    """
+    if sys.platform.startswith("win"):
+        hints = {
+            "ffmpeg": "winget install Gyan.FFmpeg   (or https://www.gyan.dev/ffmpeg/builds/)",
+            "ffprobe": "winget install Gyan.FFmpeg   (ships with ffmpeg)",
+            "deno": "winget install DenoLand.Deno   (or https://deno.com/)",
+        }
+    elif sys.platform == "darwin":
+        hints = {
+            "ffmpeg": "brew install ffmpeg   (or https://ffmpeg.martin-riedl.de/ for a portable build)",
+            "ffprobe": "brew install ffmpeg   (ships with ffmpeg)",
+            "deno": "brew install deno   (or https://deno.com/)",
+        }
+    else:
+        hints = {
+            "ffmpeg": "sudo apt install ffmpeg   (or your distro's package manager)",
+            "ffprobe": "sudo apt install ffmpeg   (ships with ffmpeg)",
+            "deno": "curl -fsSL https://deno.land/install.sh | sh",
+        }
+    return hints.get(name, f"Install {name} and put it on your PATH.")
+
+
+def _environment_report() -> dict:
+    """Shared by `doctor` and `setup`."""
     binaries = detect()
-    payload = {
-        "ok": binaries.is_download_ready,
+    problems: list[dict] = []
+
+    for name, path in (
+        ("ffmpeg", binaries.ffmpeg),
+        ("ffprobe", binaries.ffprobe),
+        ("deno", binaries.js_runtime),
+    ):
+        if not path:
+            problems.append(
+                {
+                    "what": name,
+                    "why": (
+                        "Needed to merge video and audio."
+                        if name != "deno"
+                        else "Needed to solve YouTube's JS challenge; without it "
+                        "downloads fail with HTTP 403."
+                    ),
+                    "fix": _install_hint(name),
+                }
+            )
+
+    try:
+        import yt_dlp_ejs  # noqa: F401
+
+        ejs = "installed"
+    except ImportError:
+        ejs = "MISSING"
+        problems.append(
+            {
+                "what": "yt-dlp-ejs",
+                "why": "YouTube's JS challenges can't be solved; downloads 403.",
+                "fix": "pip install yt-dlp-ejs",
+            }
+        )
+
+    try:
+        import faster_whisper  # noqa: F401
+
+        whisper = "installed"
+    except ImportError:
+        whisper = "not installed"
+
+    return {
         "yt_dlp_version": ytdlp_version(),
         "python": sys.version.split()[0],
         "ffmpeg": str(binaries.ffmpeg) if binaries.ffmpeg else None,
         "ffprobe": str(binaries.ffprobe) if binaries.ffprobe else None,
         "js_runtime": str(binaries.js_runtime) if binaries.js_runtime else None,
-        "missing": binaries.missing,
+        "yt_dlp_ejs": ejs,
+        "faster_whisper": whisper,
+        "problems": problems,
+        "ready": not problems,
     }
-    try:
-        import yt_dlp_ejs  # noqa: F401
 
-        payload["yt_dlp_ejs"] = "installed"
-    except ImportError:
-        payload["yt_dlp_ejs"] = "MISSING"
-        payload["ok"] = False
-        payload["hint"] = (
-            "yt-dlp-ejs is missing: YouTube's JS challenges can't be solved and "
-            "downloads will 403. Run: pip install yt-dlp-ejs"
+
+def cmd_setup(args) -> None:
+    """One-shot first-run setup: check the environment, show the defaults
+    that matter, and record that the user has seen them."""
+    report = _environment_report()
+    settings = load_settings()
+
+    if args.confirm:
+        update_settings({"defaults_confirmed": True})
+        emit(
+            {
+                "ok": True,
+                "message": "Setup complete — defaults confirmed.",
+                "download_dir": str(settings.resolved_download_dir()),
+                "max_height": settings.max_height,
+                "ready": report["ready"],
+                "problems": report["problems"],
+            }
         )
-    try:
-        import faster_whisper  # noqa: F401
 
-        payload["faster_whisper"] = "installed"
-    except ImportError:
-        # Not fatal: only needed for videos that have no captions.
-        payload["faster_whisper"] = "not installed (needed only for caption-less videos)"
-    emit(payload, exit_code=0 if payload["ok"] else 1)
+    emit(
+        {
+            "ok": report["ready"],
+            "environment": report,
+            "defaults": {
+                "download_folder": str(settings.resolved_download_dir()),
+                "quality": (
+                    f"up to {settings.max_height}p"
+                    if settings.max_height
+                    else "best available"
+                ),
+                "transcripts": (
+                    "YouTube captions when available; local Whisper otherwise"
+                    if settings.allow_whisper
+                    else "YouTube captions only"
+                ),
+                "already_confirmed": settings.defaults_confirmed,
+            },
+            "next_steps": [
+                "Change anything you don't like: "
+                "config set download_dir=... max_height=...",
+                "Accept these defaults: setup --confirm",
+                "Connect to Claude Code: "
+                'claude mcp add youtube-downloader --scope user -- "<this program>" mcp',
+            ],
+        },
+        exit_code=0 if report["ready"] else 1,
+    )
+
+
+def cmd_doctor(args) -> None:
+    """Environment check -- the first thing to run when something breaks.
+
+    Every problem it reports carries both why it matters and the exact
+    command to fix it on this platform.
+    """
+    report = _environment_report()
+    emit({"ok": report["ready"], **report}, exit_code=0 if report["ready"] else 1)
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +478,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("doctor", help="Check binaries and dependencies are all present.")
     p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser(
+        "setup",
+        help="First-run setup: check everything and confirm your defaults.",
+    )
+    p.add_argument("--confirm", action="store_true",
+                   help="Accept the defaults shown (stops the first-download prompt).")
+    p.set_defaults(func=cmd_setup)
 
     p = sub.add_parser(
         "config",

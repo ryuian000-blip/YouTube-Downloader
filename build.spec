@@ -62,6 +62,13 @@ else:
 icon_path = os.path.join(basedir, "assets", icon_name)
 icon = icon_path if os.path.isfile(icon_path) else None
 
+# NOTE: user-facing docs (README, the two "How To Open" guides,
+# CONNECT-TO-CLAUDE.md) are deliberately NOT listed as datas here. In a
+# onedir build PyInstaller puts datas inside _internal/, where nobody
+# looks -- a guide the user never sees is no guide at all. The build
+# scripts (build.bat / build.command) and the CI workflow copy them to
+# the TOP level of the output folder instead, next to the executables.
+
 a = Analysis(
     ["main.py"],
     pathex=[basedir],
@@ -102,14 +109,77 @@ exe = EXE(
     icon=icon,
 )
 
+# ---------------------------------------------------------------------------
+# Second executable: the agent/CLI surface, shipped in the same folder.
+#
+# This is what makes the Claude Code integration usable by someone who
+# only downloaded the app -- they register THIS exe with `claude mcp add`
+# and never need Python, a checkout, or a virtualenv.
+#
+# It has to be a separate binary rather than an argv mode of the GUI:
+# the GUI is windowed (console=False), and a windowed process on Windows
+# has no usable stdin/stdout, which is precisely what an MCP stdio server
+# needs to talk over. console=True here for the same reason.
+#
+# Its own Analysis, because it needs the MCP SDK (excluded from the GUI)
+# and does not need PySide6. COLLECT below merges both into one folder;
+# shared dependencies land at identical destinations and are deduped.
+# ---------------------------------------------------------------------------
+a_agent = Analysis(
+    ["agent_entry.py"],
+    pathex=[basedir],
+    binaries=[],
+    datas=[],
+    hiddenimports=[
+        # Reached only via runtime dispatch in agent_entry/ytdl_mcp, so
+        # static analysis alone doesn't always pull the whole MCP stack in.
+        "mcp",
+        "mcp.server.mcpserver",
+        "ytdl_cli",
+        "ytdl_mcp",
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    # No Qt in the console tool, and faster-whisper stays a dev-venv
+    # extra (see requirements.txt) rather than ~100MB+ of bundled native
+    # libs -- transcripts fall back to it only for caption-less videos.
+    excludes=["PySide6", "shiboken6", "faster_whisper", "ctranslate2", "pytest"],
+    noarchive=False,
+)
+pyz_agent = PYZ(a_agent.pure)
+
+exe_agent = EXE(
+    pyz_agent,
+    a_agent.scripts,
+    [],
+    exclude_binaries=True,
+    name="ytdl-agent",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=icon,
+)
+
 # exclude_binaries=True above + COLLECT here is what makes this onedir:
 # the binaries/data land unpacked next to the exe at build time instead
 # of being packed into it and re-extracted at every startup.
 coll = COLLECT(
     exe,
+    exe_agent,
     a.binaries,
     a.zipfiles,
     a.datas,
+    a_agent.binaries,
+    a_agent.zipfiles,
+    a_agent.datas,
     strip=False,
     upx=True,
     upx_exclude=[],

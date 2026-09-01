@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to open YouTube Downloader on Windows</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #12140f; --card: #1b1e18; --text: #eceee8; --muted: #a8ada0;
+    --accent: #a8c686; --border: #2c3029; --warn: #e8c07d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px; background: var(--bg); color: var(--text);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+  h2 { font-size: 19px; margin: 36px 0 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 22px 24px; margin: 18px 0;
+  }
+  ol { margin: 0; padding-left: 22px; }
+  ol li { margin-bottom: 14px; }
+  ol li:last-child { margin-bottom: 0; }
+  code {
+    background: #0d0f0b; border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px 7px; font-family: Consolas, "SF Mono", monospace; font-size: 14px;
+    word-break: break-all;
+  }
+  pre {
+    background: #0d0f0b; border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; margin: 12px 0 0;
+  }
+  pre code { border: 0; padding: 0; background: none; }
+  .btn {
+    display: inline-block; background: var(--accent); color: #12140f;
+    font-weight: 600; padding: 3px 12px; border-radius: 7px; font-size: 14px;
+  }
+  .note {
+    border-left: 3px solid var(--warn); padding-left: 16px; color: var(--muted);
+    margin: 18px 0;
+  }
+  .muted { color: var(--muted); }
+  strong { color: #fff; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>Opening YouTube Downloader</h1>
+  <p class="sub">Windows will warn you the first time. That's expected — here's why, and what to click.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">Keep this folder together</h2>
+    <p style="margin:0">
+      <strong>Don't drag just the <code>.exe</code> somewhere else.</strong>
+      The app needs the <code>_internal</code> folder sitting next to it.
+      Move the <em>whole folder</em> wherever you like, then make a shortcut
+      to the <code>.exe</code> if you want one on your Desktop
+      (right-click&nbsp;→&nbsp;<span class="btn">Show more options</span>&nbsp;→&nbsp;Send&nbsp;to&nbsp;→&nbsp;Desktop).
+    </p>
+  </div>
+
+  <h2>The blue warning box</h2>
+  <div class="card">
+    <p style="margin-top:0">
+      You'll see <strong>"Windows protected your PC"</strong>. This appears
+      for any app that hasn't been signed with a paid code-signing
+      certificate — it isn't a virus warning, and it doesn't mean anything
+      was detected.
+    </p>
+    <ol>
+      <li>Click <strong>More info</strong> (small link in the dialog).</li>
+      <li>Click <span class="btn">Run anyway</span>.</li>
+    </ol>
+    <p class="muted" style="margin-bottom:0">
+      Once only. It opens normally forever after.
+    </p>
+  </div>
+
+  <div class="note">
+    If your antivirus quarantines it instead, that's a false positive
+    caused by the way Python apps are packaged. You may need to allow the
+    folder in your antivirus settings.
+  </div>
+
+  <h2>Using it</h2>
+  <div class="card">
+    <p style="margin-top:0">Paste a YouTube link, press the green arrow, pick your options, hit Download.</p>
+    <p style="margin-bottom:0" class="muted">
+      Files go to your Downloads folder unless you click the folder path at
+      the bottom and choose somewhere else. Your choice is remembered.
+    </p>
+  </div>
+
+  <h2>Optional: let Claude watch videos</h2>
+  <div class="card">
+    <p style="margin-top:0">
+      This folder also contains <code>ytdl-agent.exe</code>, which connects
+      the app to Claude Code so it can read a video's transcript and look at
+      frames from it. Open a terminal in this folder and run:
+    </p>
+    <pre><code>ytdl-agent.exe setup</code></pre>
+    <p style="margin-bottom:0" class="muted">
+      Full instructions are in <code>CONNECT-TO-CLAUDE.md</code>, in this
+      same folder.
+    </p>
+  </div>
+
+</main>
+</body>
+</html>

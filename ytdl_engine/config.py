@@ -112,6 +112,19 @@ class Settings:
     # minutes on local transcription.
     allow_whisper: bool = True
 
+    # --- First-run confirmation ---------------------------------------
+    # False until the user has actually seen where downloads go and at
+    # what quality. While false, an agent's first download_video call
+    # returns those defaults for confirmation INSTEAD of downloading.
+    #
+    # A setting rather than a line in the skill on purpose: guidance in a
+    # prompt is advice an assistant may skip, especially under a
+    # permission mode that auto-approves routine tool calls. This makes
+    # the first download structurally impossible to do silently. It asks
+    # exactly once -- confirming (or running `setup`) flips it, because a
+    # prompt on every download is one people learn to click through.
+    defaults_confirmed: bool = False
+
     # --- Working cache ------------------------------------------------
     # Videos pulled just to transcribe or extract frames from. None = the
     # system temp dir. The cache is pruned oldest-first once it exceeds

@@ -2,9 +2,27 @@
 
 A single-window desktop app that wraps `yt-dlp` so pasting a YouTube link
 and downloading video or audio doesn't require touching a command line.
+It also lets **Claude Code read and watch YouTube videos** — transcripts
+and frames — via a bundled MCP server.
+
 Built on Python + PySide6 per `REBUILD-PYSIDE6.md` (the brief this was
 built from -- worth reading for the full rationale behind every choice
 below).
+
+## Just want the app?
+
+Grab the latest [**Release**](../../releases/latest) — one zip per
+platform, everything included (no Python, no ffmpeg install).
+
+1. Unzip. **Keep the folder together** — the app needs `_internal` beside it.
+2. Run `YouTube Downloader.exe` (Windows) or drag the `.app` to
+   Applications (macOS).
+3. First launch shows a security warning on both platforms, because the
+   app isn't signed with a paid certificate. Each zip contains a
+   `How To Open ...` page with the two clicks needed. Once only.
+
+The same folder contains `ytdl-agent`, which connects the app to Claude
+Code — see `CONNECT-TO-CLAUDE.md` in the zip, or the section below.
 
 ## Running it during development
 
@@ -216,24 +234,56 @@ What that unlocks, in practice:
 > transcript around "permissions" → extracts four frames at 12:40–13:10 →
 > looks at them* → summary, plus a description of the actual slide.
 
-### Setup
+### Setup — from a downloaded Release (no Python needed)
+
+The app folder contains `ytdl-agent`, a console program with everything
+built in. From a terminal **in that folder**:
+
+```bash
+ytdl-agent setup            # checks everything, shows the defaults
+ytdl-agent setup --confirm  # accept them
+```
+
+Then one command to connect it, using the full path to that program:
+
+```bash
+claude mcp add youtube-downloader --scope user -- "C:\path\to\YouTube Downloader\ytdl-agent.exe" mcp
+```
+
+macOS: `"/Applications/YouTube Downloader.app/Contents/MacOS/ytdl-agent" mcp`.
+`--scope user` makes it available in every project.
+
+### Setup — from a source checkout
 
 ```bash
 pip install -r requirements.txt
-python ytdl_cli.py doctor          # confirms ffmpeg, deno, yt-dlp, yt-dlp-ejs
-```
-
-Register the MCP server once (user scope, so it works from any project):
-
-```bash
+python ytdl_cli.py setup                 # checks binaries + shows defaults
 claude mcp add youtube-downloader --scope user -- "<repo>/.venv/Scripts/python.exe" "<repo>/ytdl_mcp.py"
 ```
 
-On macOS/Linux use `<repo>/.venv/bin/python`. Claude then has
-`search_youtube`, `get_video_info`, `get_transcript`, `extract_frames`,
-`download_video`, and `check_setup`. The repo also ships
+A fresh checkout has no `ffmpeg`/`ffprobe`/`deno` (they're gitignored);
+`setup` names the exact install command for your platform if they're
+missing.
+
+Either way Claude gets `search_youtube`, `get_video_info`,
+`get_transcript`, `extract_frames`, `download_video`, `get_settings`, and
+`check_setup`. The repo also ships
 `.claude/skills/youtube-video/SKILL.md`, which teaches the workflow (and
 the CLI fallback) to any Claude Code session opened here.
+
+### What happens on first use
+
+The first time Claude downloads a video, the tool **doesn't download** —
+it returns the folder and quality for the user to approve, so Claude asks:
+
+> I'll save this to `C:\Users\you\Downloads` at up to 1080p. Go ahead, or
+> change either first?
+
+That's a property of the tool, not a suggestion in a prompt — an
+assistant can't skip it, including under permission modes that
+auto-approve routine tool calls. It asks **once**; a prompt on every
+download is one people learn to click through. `ytdl-agent setup
+--confirm` satisfies it up front.
 
 ### CLI
 
@@ -344,6 +394,10 @@ ytdl_engine/                  headless engine -- no Qt. All the YouTube-fragile 
   frames.py                     ffmpeg frame sampling (interval / scene-change / time range)
 ytdl_cli.py                   headless CLI over the engine (JSON out, no prompts)
 ytdl_mcp.py                   stdio MCP server: lets Claude Code drive all of the above
+agent_entry.py                entry point for the shipped `ytdl-agent` console binary,
+                              so a downloaded app can serve MCP without Python installed
+CONNECT-TO-CLAUDE.md          ships in the release zip: how to wire the app to Claude Code
+How To Open ... (Windows).html  ships in the Windows zip: SmartScreen + keep-the-folder guide
 .claude/skills/youtube-video/ skill teaching Claude the search -> transcript -> frames workflow
 tests/                        pytest suite (headless, no network) + opt-in network smoke scripts
 assets/                       icon.ico, icon.icns, icon.png, logo_on_dark.png
@@ -354,6 +408,23 @@ build.spec                    PyInstaller spec -- windowed .exe on Windows, .app
 ## Tests
 
 ```bash
-python -m pytest              # headless GUI + engine tests, no network
-python tests/smoke_mcp.py --network    # drives the MCP server over real stdio
+python -m pytest                          # headless GUI + engine tests, no network
+python tests/smoke_mcp.py --network       # drives the MCP server over real stdio
+python tests/smoke_shipped.py --network   # drives the BUILT ytdl-agent binary (run after a build)
 ```
+
+`smoke_shipped.py` is the one that proves the claim that matters: it
+talks to the built executable exactly as Claude Code would, checks it
+finds its own bundled ffmpeg/deno, and confirms the first download asks
+before writing anything.
+
+## Releasing
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+CI builds both platforms and publishes a GitHub Release with both zips.
+Use a Release rather than pointing anyone at a CI artifact: artifact
+downloads require the recipient to be signed in to GitHub and expire
+after 90 days.

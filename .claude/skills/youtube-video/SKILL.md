@@ -78,6 +78,23 @@ stdout; progress goes to stderr.
 
 Timestamps accept `4:10`, `1:02:03`, `250`, or `2m30s`.
 
+## The first download asks first
+
+The very first time you download a video on a machine, the tool returns
+`needs_confirmation` instead of downloading. It hands you the folder and
+quality — show the user, in your own words, and wait:
+
+> I'll save this to C:\Users\you\Downloads at up to 1080p. Go ahead, or
+> change either first?
+
+When they agree, call again with `confirmed=true`. This happens **once**,
+not per download. Don't work around it, and don't confirm on the user's
+behalf — the whole point is that a file never lands on their disk in a
+shape they didn't choose.
+
+If they want something different, either pass `output_dir` / `quality`
+for that one call, or tell them the command to change it for good.
+
 ## Defaults are the user's, not yours
 
 Quality, destination folder, frame counts, and any size/duration limits

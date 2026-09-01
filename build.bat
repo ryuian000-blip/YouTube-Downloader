@@ -87,9 +87,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM User-facing docs go NEXT TO the exe, not inside _internal where
+REM PyInstaller would put them and nobody would ever find them.
+copy /Y "README.md" "dist\YouTube Downloader\" >nul 2>nul
+copy /Y "CONNECT-TO-CLAUDE.md" "dist\YouTube Downloader\" >nul 2>nul
+copy /Y "How To Open YouTube Downloader (Windows).html" "dist\YouTube Downloader\" >nul 2>nul
+
 echo.
 echo Done. The finished app is at:
 echo   %cd%\dist\YouTube Downloader\YouTube Downloader.exe
+echo.
+echo That folder also contains ytdl-agent.exe, which connects the app to
+echo Claude Code ^(see CONNECT-TO-CLAUDE.md in the same folder^).
 echo ^(that whole "YouTube Downloader" folder needs to stay together --
 echo the exe depends on the _internal folder next to it^)
 echo.
