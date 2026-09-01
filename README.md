@@ -200,6 +200,65 @@ These are the brief's own "verify before shipping" items, unchanged:
       it matches actual output filenames for every format/postprocessor
       combination.
 
+## Giving Claude Code eyes and ears for YouTube
+
+The same download machinery is exposed headlessly, so an AI assistant
+that can't watch videos can still **read** one (timestamped transcript)
+and **see** any moment of it (frames as images it can actually look at).
+
+What that unlocks, in practice:
+
+> **You:** Find that talk where Boris explains Claude Code's philosophy,
+> summarize the part about permissions, and show me what's on screen when
+> he demos it.
+>
+> **Claude:** *searches YouTube → checks duration and captions → reads the
+> transcript around "permissions" → extracts four frames at 12:40–13:10 →
+> looks at them* → summary, plus a description of the actual slide.
+
+### Setup
+
+```bash
+pip install -r requirements.txt
+python ytdl_cli.py doctor          # confirms ffmpeg, deno, yt-dlp, yt-dlp-ejs
+```
+
+Register the MCP server once (user scope, so it works from any project):
+
+```bash
+claude mcp add youtube-downloader --scope user -- "<repo>/.venv/Scripts/python.exe" "<repo>/ytdl_mcp.py"
+```
+
+On macOS/Linux use `<repo>/.venv/bin/python`. Claude then has
+`search_youtube`, `get_video_info`, `get_transcript`, `extract_frames`,
+`download_video`, and `check_setup`. The repo also ships
+`.claude/skills/youtube-video/SKILL.md`, which teaches the workflow (and
+the CLI fallback) to any Claude Code session opened here.
+
+### CLI
+
+Works standalone, and doubles as the debugging surface for the MCP
+server. JSON on stdout, progress on stderr, non-zero exit on failure.
+
+```bash
+python ytdl_cli.py search "claude code tutorial" --limit 5
+python ytdl_cli.py info    "https://youtu.be/VIDEO_ID"
+python ytdl_cli.py transcript "https://youtu.be/VIDEO_ID" --format text --start 4:00 --end 6:30
+python ytdl_cli.py frames  "https://youtu.be/VIDEO_ID" --start 4:10 --end 4:30 --max 5
+python ytdl_cli.py frames  "https://youtu.be/VIDEO_ID" --scene-threshold 0.3   # slide decks
+python ytdl_cli.py download "https://youtu.be/VIDEO_ID" --quality 1080 --dir ~/Downloads
+```
+
+Transcripts use YouTube's own captions when they exist (instant) and fall
+back to local Whisper via `faster-whisper` when they don't — no API key,
+no cloud, no per-video cost. Frames are sampled, not exhaustive: a
+20-minute video is ~36,000 frames, so the tools default to one per 10s,
+support scene-change detection, and cap output rather than silently
+dumping thousands of files.
+
+Videos fetched this way land in a temp cache keyed by video ID, so
+transcript-then-frames on the same video downloads it once.
+
 ## Project layout
 
 ```
@@ -216,9 +275,29 @@ app/theme_manager.py          thin wrapper around the (fixed, dark-only) color t
 app/widgets.py                custom-painted animated buttons, radios, checkboxes, progress bar
 app/main_window.py            the one window: all cards, layout, reveal animation
 app/splash.py                 animated splash screen
-app/binaries.py               ffmpeg/ffprobe/deno detection (frozen vs. dev)
-app/workers.py                QThread workers: fetch metadata (+ thumbnail), run the download
+app/binaries.py               re-export of ytdl_engine.binaries (kept as the GUI's import surface)
+app/workers.py                QThread wrappers over ytdl_engine: fetch metadata, run the download
+ytdl_engine/                  headless engine -- no Qt. All the YouTube-fragile logic lives here,
+                              shared by the GUI, the CLI, and the MCP server, so a YouTube change
+                              is fixed once:
+  core.py                       shared yt-dlp options, retry loop, ANSI stripping, timestamps
+  binaries.py                   ffmpeg/ffprobe/deno detection (frozen vs. dev)
+  info.py                       extraction, search, size/quality helpers
+  download.py                   format strings, postprocessors, agent-facing media cache
+  transcript.py                 YouTube captions, with local Whisper as fallback
+  frames.py                     ffmpeg frame sampling (interval / scene-change / time range)
+ytdl_cli.py                   headless CLI over the engine (JSON out, no prompts)
+ytdl_mcp.py                   stdio MCP server: lets Claude Code drive all of the above
+.claude/skills/youtube-video/ skill teaching Claude the search -> transcript -> frames workflow
+tests/                        pytest suite (headless, no network) + opt-in network smoke scripts
 assets/                       icon.ico, icon.icns, icon.png, logo_on_dark.png
 build.spec                    PyInstaller spec -- windowed .exe on Windows, .app bundle on macOS
 .github/workflows/build.yml   CI: fetches binaries fresh, builds Windows + macOS, uploads both
+```
+
+## Tests
+
+```bash
+python -m pytest              # headless GUI + engine tests, no network
+python tests/smoke_mcp.py --network    # drives the MCP server over real stdio
 ```
