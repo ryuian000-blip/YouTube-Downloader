@@ -71,7 +71,14 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # The GUI never transcribes, serves MCP, or runs tests -- but
+    # ytdl_engine.transcript imports faster_whisper inside a function, and
+    # PyInstaller's analysis follows function-level imports, which would
+    # drag ctranslate2 and its ~100MB+ of native libs into a build that
+    # can't use them. These are agent-surface dependencies (ytdl_cli.py /
+    # ytdl_mcp.py), installed in the dev venv and deliberately left out of
+    # the shipped app.
+    excludes=["faster_whisper", "ctranslate2", "mcp", "pytest", "onnxruntime"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

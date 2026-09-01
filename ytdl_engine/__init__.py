@@ -19,7 +19,7 @@ from .core import (
     parse_timestamp,
     resolve_runtime_paths,
     strip_ansi,
-    YTDLP_VERSION,
+    ytdlp_version,
 )
 from .download import (
     ALREADY_DOWNLOADED_MESSAGE,
@@ -87,7 +87,7 @@ __all__ = [
     "MODE_VIDEO_ONLY",
     "Transcript",
     "TranscriptSegment",
-    "YTDLP_VERSION",
+    "ytdlp_version",
     "app_root",
     "available_heights",
     "cache_dir_for",

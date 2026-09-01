@@ -3,6 +3,12 @@ yt-dlp
 pillow
 pyinstaller
 
+# Agent-facing surfaces (ytdl_cli.py / ytdl_mcp.py). The GUI does not
+# import these -- a plain `python main.py` still runs without them.
+mcp                 # MCP server SDK (2.x: FastMCP is now MCPServer)
+faster-whisper      # local transcription, only for videos with no captions
+pytest              # the test suite in tests/
+
 # yt-dlp's JS challenge solver scripts. Deno alone (the bundled binary) is
 # just the engine -- without this package there are no solver scripts for
 # it to run, YouTube's nsig/PO-token challenges silently fail, and most

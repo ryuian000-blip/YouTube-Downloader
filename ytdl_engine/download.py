@@ -13,7 +13,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import yt_dlp
 
 from .core import (
     EngineError,
@@ -83,6 +82,8 @@ def predict_output_path(
     .mkv container when embedding a thumbnail into a webm), but right for
     the two extensions this project actually produces.
     """
+    import yt_dlp
+
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -184,6 +185,8 @@ def download(
             on_progress(0.0, message)
 
     def _once() -> dict:
+        import yt_dlp
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # extract_info(download=True), not the simpler download() --
             # download() only returns a retcode, but extract_info hands

@@ -44,7 +44,7 @@ from ytdl_engine import (  # noqa: E402
     MODE_VIDEO_ONLY,
     DownloadOptions,
     EngineError,
-    YTDLP_VERSION,
+    ytdlp_version,
     detect,
     extract_frames,
     get_transcript,
@@ -322,7 +322,7 @@ async def check_setup_tool() -> dict[str, Any]:
     binaries = await _run(detect)
     payload: dict[str, Any] = {
         "ready": binaries.is_download_ready,
-        "yt_dlp_version": YTDLP_VERSION,
+        "yt_dlp_version": ytdlp_version(),
         "ffmpeg": str(binaries.ffmpeg) if binaries.ffmpeg else None,
         "js_runtime": str(binaries.js_runtime) if binaries.js_runtime else None,
         "missing": binaries.missing,

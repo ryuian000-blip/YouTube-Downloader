@@ -17,7 +17,6 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yt_dlp
 
 from .core import EngineError, base_opts, format_timestamp, resolve_runtime_paths
 from .download import ensure_local_media
@@ -223,6 +222,8 @@ def _captions_from_info(
 ) -> tuple[list[TranscriptSegment], str, str] | None:
     """-> (segments, method, language) or None when the video has no
     usable captions."""
+    import yt_dlp
+
     for key, method in (("subtitles", "captions"), ("automatic_captions", "auto-captions")):
         picked = _pick_track(info.get(key) or {}, lang)
         if not picked:

@@ -37,7 +37,7 @@ from ytdl_engine import (  # noqa: E402
     MODE_VIDEO_ONLY,
     DownloadOptions,
     EngineError,
-    YTDLP_VERSION,
+    ytdlp_version,
     detect,
     extract_frames,
     get_transcript,
@@ -169,7 +169,7 @@ def cmd_doctor(args) -> None:
     binaries = detect()
     payload = {
         "ok": binaries.is_download_ready,
-        "yt_dlp_version": YTDLP_VERSION,
+        "yt_dlp_version": ytdlp_version(),
         "python": sys.version.split()[0],
         "ffmpeg": str(binaries.ffmpeg) if binaries.ffmpeg else None,
         "ffprobe": str(binaries.ffprobe) if binaries.ffprobe else None,

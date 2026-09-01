@@ -140,7 +140,7 @@ def test_download_retries_transient_failures_then_succeeds(tmp_path):
         return {"requested_downloads": [{"__real_download": True, "filepath": "out.mp4"}]}
 
     messages = []
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(flaky)), \
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(flaky)), \
          patch("ytdl_engine.core.time.sleep") as sleep:
         result = engine_download.download(
             make_options(tmp_path), on_progress=lambda pct, text: messages.append(text)
@@ -159,7 +159,7 @@ def test_download_gives_up_after_max_attempts_reporting_the_last_error(tmp_path)
         calls["n"] += 1
         raise Exception(f"HTTP Error 403: Forbidden (attempt {calls['n']})")
 
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(always_fails)), \
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(always_fails)), \
          patch("ytdl_engine.core.time.sleep"):
         with pytest.raises(EngineError) as excinfo:
             engine_download.download(make_options(tmp_path))
@@ -173,7 +173,7 @@ def test_first_attempt_success_adds_no_retry_delay(tmp_path):
         return {"requested_downloads": [{"__real_download": True}]}
 
     messages = []
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(immediate)), \
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(immediate)), \
          patch("ytdl_engine.core.time.sleep") as sleep:
         engine_download.download(
             make_options(tmp_path), on_progress=lambda pct, text: messages.append(text)
@@ -187,7 +187,7 @@ def test_skipped_file_reports_already_downloaded(tmp_path):
     def skipped(url, download=True):
         return {"requested_downloads": [{"__real_download": False}]}
 
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(skipped)):
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(skipped)):
         result = engine_download.download(make_options(tmp_path))
 
     assert result.message == engine_download.ALREADY_DOWNLOADED_MESSAGE
@@ -198,7 +198,7 @@ def test_force_overwrite_reports_a_real_download(tmp_path):
     def skipped(url, download=True):
         return {"requested_downloads": [{"__real_download": False}]}
 
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(skipped)):
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(skipped)):
         result = engine_download.download(make_options(tmp_path, force_overwrite=True))
 
     assert result.message == engine_download.DOWNLOAD_COMPLETE_MESSAGE
@@ -379,7 +379,7 @@ def test_download_worker_runs_the_engine_and_emits_its_message(qapp, tmp_path):
     worker.succeeded.connect(lambda msg: emitted.setdefault("succeeded", msg))
     worker.failed.connect(lambda msg: emitted.setdefault("failed", msg))
 
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(immediate)):
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(immediate)):
         worker.run()  # run() directly: no thread needed, and no event loop to pump
 
     assert emitted.get("succeeded") == engine_download.DOWNLOAD_COMPLETE_MESSAGE
@@ -397,7 +397,7 @@ def test_download_worker_reports_engine_errors_as_plain_messages(qapp, tmp_path)
     worker.succeeded.connect(lambda msg: emitted.setdefault("succeeded", msg))
     worker.failed.connect(lambda msg: emitted.setdefault("failed", msg))
 
-    with patch("ytdl_engine.download.yt_dlp.YoutubeDL", return_value=mock_ydl(always_fails)), \
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(always_fails)), \
          patch("ytdl_engine.core.time.sleep"):
         worker.run()
 
@@ -421,7 +421,7 @@ def test_fetch_worker_emits_video_info_without_retrying(qapp):
     worker.succeeded.connect(lambda info: emitted.setdefault("info", info))
     worker.failed.connect(lambda msg: emitted.setdefault("failed", msg))
 
-    with patch("ytdl_engine.info.yt_dlp.YoutubeDL", return_value=mock_ydl(failing)), \
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(failing)), \
          patch("ytdl_engine.core.time.sleep") as sleep:
         worker.run()
 
@@ -451,7 +451,7 @@ def test_fetch_worker_builds_video_info_from_engine_output(qapp):
     worker.succeeded.connect(lambda info: emitted.setdefault("info", info))
     worker.failed.connect(lambda msg: emitted.setdefault("failed", msg))
 
-    with patch("ytdl_engine.info.yt_dlp.YoutubeDL", return_value=mock_ydl(ok)):
+    with patch("yt_dlp.YoutubeDL", return_value=mock_ydl(ok)):
         worker.run()
 
     result = emitted.get("info")

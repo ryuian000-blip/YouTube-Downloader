@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import yt_dlp
 
 from .core import (
     EngineError,
@@ -148,10 +147,14 @@ def extract_info(
 ) -> dict:
     """Metadata only (no download). Raises EngineError with a
     user-presentable message on failure."""
+    import yt_dlp
+
     js_runtime_path, _ = resolve_runtime_paths(js_runtime_path, None)
     opts = base_opts(js_runtime_path, skip_download=True)
 
     def _once() -> dict:
+        import yt_dlp
+
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         if not info:
@@ -180,6 +183,8 @@ def fetch_thumbnail_bytes(url: str, js_runtime_path: str | None = None) -> bytes
     decodes them itself. Never fatal: a video with unreachable artwork
     should still be downloadable, just without a preview.
     """
+    import yt_dlp
+
     if not url:
         return None
     from yt_dlp.networking.common import Request as YdlRequest
@@ -262,6 +267,8 @@ def search_youtube(
     per-video extractions -- a search is for *choosing* a video, and
     get_video_info() exists for when the caller has chosen one.
     """
+    import yt_dlp
+
     query = (query or "").strip()
     if not query:
         raise EngineError("Search query is empty.")
@@ -271,6 +278,8 @@ def search_youtube(
     opts = base_opts(js_runtime_path, skip_download=True, extract_flat="in_playlist")
 
     def _once() -> dict:
+        import yt_dlp
+
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(f"ytsearch{limit}:{query}", download=False) or {}
 
