@@ -240,8 +240,15 @@ def summarize_info(info: dict) -> dict:
 
 
 def get_video_info(url: str, js_runtime_path: str | None = None) -> dict:
-    """Public entry point: summarized metadata for one video."""
-    return summarize_info(extract_info(url, js_runtime_path))
+    """Public entry point: summarized metadata for one video.
+
+    Doesn't retry, matching the GUI's FetchWorker: the failures this hits
+    are overwhelmingly deterministic (bad URL, private or removed video),
+    so retrying just makes the caller wait through two pointless delays
+    before hearing the same answer. Downloads still retry -- one dying
+    halfway really is worth another attempt.
+    """
+    return summarize_info(extract_info(url, js_runtime_path, retry=False))
 
 
 def search_youtube(
