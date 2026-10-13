@@ -301,7 +301,11 @@ python ytdl_cli.py download "https://youtu.be/VIDEO_ID" --quality 1080 --dir ~/D
 
 Transcripts use YouTube's own captions when they exist (instant) and fall
 back to local Whisper via `faster-whisper` when they don't — no API key,
-no cloud, no per-video cost. Frames are sampled, not exhaustive: a
+no cloud, no per-video cost. **That fallback uses an NVIDIA GPU when the
+machine has one**, which is roughly 5x faster: measured on a 22-minute
+video with the `small` model, an RTX 4070 Laptop took 106s against 565s
+on CPU (12.6x vs 2.4x realtime). It falls back to CPU on its own when
+there's no GPU, so nothing to configure either way. Frames are sampled, not exhaustive: a
 20-minute video is ~36,000 frames, so the tools default to one per 10s,
 support scene-change detection, and cap output rather than silently
 dumping thousands of files.
@@ -348,6 +352,7 @@ file without you noticing.
 | `frame_download_height` | `480` | Quality of the copy fetched purely to slice frames from. Raise it to read fine print. |
 | `scene_threshold` | `0.3` | Scene-change sensitivity. |
 | `transcript_language` / `whisper_model` | `en` / `small` | Caption language and local-transcription model. |
+| `whisper_device` | `auto` | Where local transcription runs: `auto` (GPU when present), `cuda`, or `cpu`. |
 | `allow_whisper` | `true` | Set false to fail fast on caption-less videos instead of spending minutes transcribing. |
 | `cache_dir` / `cache_max_mb` | temp dir / `5000` | Where working copies live, and when to start evicting the oldest. `none` = never evict. |
 

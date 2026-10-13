@@ -165,6 +165,7 @@ def cmd_transcript(args) -> None:
         lang=args.lang,
         force_whisper=args.force_whisper,
         whisper_model=args.model,
+        whisper_device=args.device,
         on_status=status,
     )
     start = parse_timestamp(args.start)
@@ -360,9 +361,14 @@ def _environment_report() -> dict:
     except ImportError:
         whisper = "not installed"
 
+    from ytdl_engine.transcript import cuda_available
+
     return {
         "yt_dlp_version": ytdlp_version(),
         "python": sys.version.split()[0],
+        "gpu_for_transcription": (
+            "available (NVIDIA/CUDA)" if cuda_available() else "not available — CPU only"
+        ),
         "ffmpeg": str(binaries.ffmpeg) if binaries.ffmpeg else None,
         "ffprobe": str(binaries.ffprobe) if binaries.ffprobe else None,
         "js_runtime": str(binaries.js_runtime) if binaries.js_runtime else None,
@@ -480,6 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Ignore YouTube captions and transcribe locally.")
     p.add_argument("--model", default=DEFAULT_WHISPER_MODEL,
                    help=f"Whisper model size (default {DEFAULT_WHISPER_MODEL}).")
+    p.add_argument("--device", default=None, choices=["auto", "cuda", "cpu"],
+                   help="Where local transcription runs. Default: the "
+                        "whisper_device setting (auto = GPU when present).")
     p.set_defaults(func=cmd_transcript)
 
     p = sub.add_parser("frames", help="Extract frames as JPEGs from a URL or local file.")

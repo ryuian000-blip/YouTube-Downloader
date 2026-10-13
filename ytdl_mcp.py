@@ -183,6 +183,16 @@ async def get_transcript_tool(
         str | None,
         Field(description="Whisper model size if local transcription runs. Omit for the configured default."),
     ] = None,
+    whisper_device: Annotated[
+        Literal["auto", "cuda", "cpu"] | None,
+        Field(
+            description=(
+                "Where local transcription runs. 'auto' (the default) uses "
+                "the GPU when the machine has one, which is several times "
+                "faster. Omit unless the user asks."
+            )
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     transcript = await _run(
         get_transcript,
@@ -190,6 +200,7 @@ async def get_transcript_tool(
         lang=lang,
         force_whisper=force_whisper,
         whisper_model=whisper_model,
+        whisper_device=whisper_device,
     )
     window = transcript.slice(parse_timestamp(start), parse_timestamp(end))
     payload: dict[str, Any] = {
@@ -202,6 +213,8 @@ async def get_transcript_tool(
     }
     if window.note:
         payload["note"] = window.note
+    if window.device:
+        payload["device"] = window.device
     if format == "text":
         payload["text"] = window.as_text()
     else:
@@ -526,9 +539,14 @@ async def update_settings_tool(
 )
 async def check_setup_tool() -> dict[str, Any]:
     binaries = await _run(detect)
+    from ytdl_engine.transcript import cuda_available
+
     payload: dict[str, Any] = {
         "ready": binaries.is_download_ready,
         "yt_dlp_version": ytdlp_version(),
+        "gpu_for_transcription": (
+            "available" if cuda_available() else "not available — CPU only"
+        ),
         "ffmpeg": str(binaries.ffmpeg) if binaries.ffmpeg else None,
         "js_runtime": str(binaries.js_runtime) if binaries.js_runtime else None,
         "missing": binaries.missing,

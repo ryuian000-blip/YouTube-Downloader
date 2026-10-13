@@ -83,6 +83,14 @@ CACHE_CHOICES = [
 
 FRAME_QUALITY_CHOICES = [("360p", 360), ("480p", 480), ("720p", 720), ("1080p", 1080)]
 
+# Short labels, same reason as WHISPER_CHOICES above -- the hint text
+# below the control carries the explanation.
+WHISPER_DEVICE_CHOICES = [
+    ("Automatic", "auto"),
+    ("Graphics card", "cuda"),
+    ("Processor", "cpu"),
+]
+
 
 def _section(title: str) -> QLabel:
     label = QLabel(title)
@@ -277,6 +285,11 @@ class SettingsPage(QWidget):
         self._whisper_combo = self._combo(WHISPER_CHOICES, "whisper_model")
         card.addWidget(_Row("Accuracy", self._whisper_combo))
 
+        self._device_combo = self._combo(WHISPER_DEVICE_CHOICES, "whisper_device")
+        card.addWidget(_Row("Transcribe using", self._device_combo))
+        self._device_hint = _hint("")
+        card.addWidget(self._device_hint)
+
     def _build_storage_card(self) -> None:
         card = self._card()
         card.addWidget(_section("Working files"))
@@ -345,8 +358,28 @@ class SettingsPage(QWidget):
         finally:
             self._loading = False
         self._whisper_combo.setEnabled(settings.allow_whisper)
+        self._device_combo.setEnabled(settings.allow_whisper)
+        self._device_hint.setText(self._device_hint_text())
         self._path_label.setText(f"Saved in {settings_path()}")
         self._refresh_cache_label()
+
+    def _device_hint_text(self) -> str:
+        """Say what this machine will actually do, not what is possible.
+
+        A generic "uses the GPU if available" leaves the user guessing
+        whether theirs counts; checking takes microseconds and answers it.
+        """
+        from ytdl_engine.transcript import cuda_available
+
+        if cuda_available():
+            return (
+                "A graphics card was found — transcribing on it is several "
+                "times faster than the processor."
+            )
+        return (
+            "No compatible graphics card found, so the processor will be "
+            "used. (NVIDIA cards only.)"
+        )
 
     def _refresh_cache_label(self) -> None:
         try:
@@ -363,7 +396,9 @@ class SettingsPage(QWidget):
         except Exception:  # noqa: BLE001 -- a read-only disk shouldn't
             return         # take the window down; the control just won't stick.
         if "allow_whisper" in changes:
-            self._whisper_combo.setEnabled(bool(changes["allow_whisper"]))
+            enabled = bool(changes["allow_whisper"])
+            self._whisper_combo.setEnabled(enabled)
+            self._device_combo.setEnabled(enabled)
 
     # ------------------------------------------------------------------
     # Actions

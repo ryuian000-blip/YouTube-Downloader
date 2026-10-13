@@ -55,6 +55,8 @@ class Transcript:
     duration_seconds: float | None = None
     truncated: bool = False
     note: str | None = None
+    # "cuda" | "cpu" for a Whisper transcript; None when captions were used.
+    device: str | None = None
 
     def slice(self, start: float | None, end: float | None) -> "Transcript":
         """Time-window a transcript. Segments are kept when they OVERLAP
@@ -74,6 +76,7 @@ class Transcript:
             duration_seconds=self.duration_seconds,
             truncated=self.truncated,
             note=self.note,
+            device=self.device,
         )
 
     def as_text(self) -> str:
@@ -109,6 +112,7 @@ class Transcript:
             "segment_count": len(self.segments),
             "truncated": self.truncated,
             "note": self.note,
+            "device": self.device,
             "segments": [s.as_dict() for s in self.segments],
         }
 
@@ -253,18 +257,68 @@ def _captions_from_info(
 # Whisper path
 # ---------------------------------------------------------------------------
 
+def cuda_available() -> bool:
+    """Whether CTranslate2 can see a usable CUDA device.
+
+    Only answers "is a GPU visible" -- it does NOT prove inference works,
+    because the usual failure (missing cuDNN/cuBLAS DLLs) surfaces at
+    model load, not here. That's why the caller still falls back.
+    """
+    try:
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:  # noqa: BLE001 -- any import/driver problem means "no"
+        return False
+
+
+def resolve_whisper_device(preference: str = "auto") -> tuple[str, str]:
+    """-> (device, compute_type) for faster-whisper.
+
+    float16 on GPU and int8 on CPU: those are the fastest types each
+    backend actually supports well (int8 is the point of running on CPU
+    at all; float16 is the point of running on a GPU).
+
+    "cuda" requested explicitly with no GPU present is an error, not a
+    silent downgrade -- someone who asked for the GPU should be told it
+    isn't there rather than wonder why it's still slow. "auto" downgrades
+    quietly, which is the whole job of "auto".
+    """
+    preference = (preference or "auto").strip().lower()
+    if preference == "cpu":
+        return "cpu", "int8"
+    if preference == "cuda":
+        if not cuda_available():
+            raise EngineError(
+                "GPU transcription was requested but no CUDA device was found. "
+                "Set the transcription device back to Auto or CPU, or check "
+                "your NVIDIA driver."
+            )
+        return "cuda", "float16"
+    return ("cuda", "float16") if cuda_available() else ("cpu", "int8")
+
+
 def transcribe_audio_file(
     audio_path: Path,
     model_size: str = DEFAULT_WHISPER_MODEL,
     language: str | None = None,
     on_status: "callable | None" = None,
-) -> tuple[list[TranscriptSegment], str | None]:
+    device: str = "auto",
+) -> tuple[list[TranscriptSegment], str | None, str]:
     """Local transcription via faster-whisper.
 
-    CPU + int8 by default so this works on any machine without CUDA. The
-    model downloads itself on first use (a few hundred MB for "small"),
-    which is why callers get an on_status heads-up rather than a silent
-    multi-minute stall.
+    Returns (segments, detected_language, device_used).
+
+    Runs on the GPU when one is available, which is several times faster
+    than CPU -- but every GPU path falls back to CPU rather than failing
+    the transcript, because the ways a CUDA setup breaks (missing cuDNN,
+    a driver mismatch, or simply not enough VRAM for a bigger model on a
+    laptop card) all surface as an exception at load or inference time
+    rather than as a clean "no GPU here" answer.
+
+    The model downloads itself on first use (a few hundred MB for
+    "small"), which is why callers get an on_status heads-up rather than
+    a silent multi-minute stall.
     """
     try:
         from faster_whisper import WhisperModel
@@ -273,35 +327,66 @@ def transcribe_audio_file(
             "faster-whisper isn't installed. Run: pip install faster-whisper"
         ) from exc
 
-    if on_status:
-        on_status(
-            f"Loading Whisper model '{model_size}' "
-            "(first run downloads it, this can take a few minutes)…"
-        )
-    try:
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    except Exception as exc:  # noqa: BLE001
-        raise EngineError(f"Couldn't load the Whisper model: {exc}") from exc
+    device, compute_type = resolve_whisper_device(device)
 
-    if on_status:
-        on_status("Transcribing audio locally…")
+    def _load(dev: str, ctype: str):
+        if on_status:
+            where = "GPU" if dev == "cuda" else "CPU"
+            on_status(
+                f"Loading Whisper model '{model_size}' on {where} "
+                "(first run downloads it, this can take a few minutes)…"
+            )
+        return WhisperModel(model_size, device=dev, compute_type=ctype)
+
+    def _fallback_to_cpu(reason: str):
+        if on_status:
+            on_status(f"GPU transcription unavailable ({reason}); using CPU instead…")
+        return _load("cpu", "int8"), "cpu", "int8"
+
     try:
-        raw_segments, info = model.transcribe(
+        model = _load(device, compute_type)
+    except Exception as exc:  # noqa: BLE001
+        if device != "cuda":
+            raise EngineError(f"Couldn't load the Whisper model: {exc}") from exc
+        try:
+            model, device, compute_type = _fallback_to_cpu(str(exc).splitlines()[0])
+        except Exception as cpu_exc:  # noqa: BLE001
+            raise EngineError(f"Couldn't load the Whisper model: {cpu_exc}") from cpu_exc
+
+    def _run(m):
+        raw_segments, info = m.transcribe(
             str(audio_path), language=language, vad_filter=True
         )
-        segments = [
+        # Materialised here, not returned lazily: faster-whisper yields
+        # segments as it decodes, so a GPU failure mid-stream would
+        # otherwise escape this function's fallback and surface to the
+        # caller as a half-finished transcript.
+        return [
             TranscriptSegment(
                 start=float(s.start or 0.0),
                 end=float(s.end or 0.0),
                 text=(s.text or "").strip(),
             )
             for s in raw_segments
-        ]
+        ], info
+
+    if on_status:
+        on_status(f"Transcribing audio locally on {'GPU' if device == 'cuda' else 'CPU'}…")
+    try:
+        segments, info = _run(model)
     except Exception as exc:  # noqa: BLE001
-        raise EngineError(f"Transcription failed: {exc}") from exc
+        if device != "cuda":
+            raise EngineError(f"Transcription failed: {exc}") from exc
+        # Most likely out of VRAM for this model size. Retry on CPU
+        # rather than hand back nothing.
+        model, device, compute_type = _fallback_to_cpu(str(exc).splitlines()[0])
+        try:
+            segments, info = _run(model)
+        except Exception as cpu_exc:  # noqa: BLE001
+            raise EngineError(f"Transcription failed: {cpu_exc}") from cpu_exc
 
     detected = getattr(info, "language", None)
-    return [s for s in segments if s.text], detected
+    return [s for s in segments if s.text], detected, device
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +402,7 @@ def get_transcript(
     ffmpeg_location: str | None = None,
     on_status: "callable | None" = None,
     settings=None,
+    whisper_device: str | None = None,
 ) -> Transcript:
     """Timestamped transcript for a YouTube URL.
 
@@ -333,6 +419,9 @@ def get_transcript(
     settings = settings or load_settings()
     lang = lang if lang is not None else settings.transcript_language
     whisper_model = whisper_model if whisper_model is not None else settings.whisper_model
+    whisper_device = (
+        whisper_device if whisper_device is not None else settings.whisper_device
+    )
     js_runtime_path, ffmpeg_location = resolve_runtime_paths(
         js_runtime_path, ffmpeg_location
     )
@@ -381,11 +470,12 @@ def get_transcript(
         on_progress=(lambda pct, text: on_status(text)) if on_status else None,
         settings=settings,
     )
-    segments, detected = transcribe_audio_file(
+    segments, detected, device_used = transcribe_audio_file(
         audio_path,
         model_size=whisper_model,
         language=None if lang == "auto" else lang,
         on_status=on_status,
+        device=whisper_device,
     )
     if not segments:
         raise EngineError(
@@ -399,5 +489,9 @@ def get_transcript(
         video_id=video_id,
         title=title,
         duration_seconds=duration,
-        note=f"Transcribed locally with Whisper '{whisper_model}'.",
+        device=device_used,
+        note=(
+            f"Transcribed locally with Whisper '{whisper_model}' on "
+            f"{'GPU' if device_used == 'cuda' else 'CPU'}."
+        ),
     )

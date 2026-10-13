@@ -108,6 +108,11 @@ class Settings:
     # --- Transcripts --------------------------------------------------
     transcript_language: str = "en"
     whisper_model: str = "small"
+    # "auto" | "cuda" | "cpu". Auto uses the GPU when one is present,
+    # which is several times faster, and falls back to CPU when it isn't
+    # -- so it is safe to leave alone on any machine. "cuda" forces the
+    # GPU and errors if there is none, rather than quietly being slow.
+    whisper_device: str = "auto"
     # Set false to make caption-less videos fail fast instead of spending
     # minutes on local transcription.
     allow_whisper: bool = True

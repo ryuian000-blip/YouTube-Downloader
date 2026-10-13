@@ -149,6 +149,12 @@ the user's own machine — minutes of work, plus a one-time speech-model
 download of a few hundred MB. Say so before you start; otherwise it just
 looks like you've frozen.
 
+How slow depends on the machine: transcription uses an NVIDIA GPU
+automatically when there is one (~5x faster than CPU), and `check_setup`
+reports whether this machine has one. Leave `whisper_device` alone unless
+the user asks — "auto" already does the right thing, and forcing `cuda`
+on a machine without a GPU is an error rather than a fallback.
+
 **No captions and no `faster-whisper` installed** → transcript fails with
 a message saying so. `pip install faster-whisper` fixes it (the shipped
 app's `ytdl-agent` reports this under `doctor`).
