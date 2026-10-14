@@ -113,9 +113,17 @@ jobs:
             Copy-Item $real.FullName -Destination ".\$tool.exe" -Force
           }
           # Prove what landed actually runs, rather than trusting its size.
-          & .\ffmpeg.exe -version  | Select-Object -First 1
-          & .\ffprobe.exe -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw "the copied ffprobe.exe did not run" }
+          # Out-String, not `Select-Object -First 1`: -First stops the
+          # pipeline as soon as it has its one line, which terminates the
+          # native command early and leaves $LASTEXITCODE non-zero even
+          # though ffmpeg printed its version perfectly well.
+          foreach ($f in @(".\ffmpeg.exe", ".\ffprobe.exe")) {
+            $out = & $f -version 2>&1 | Out-String
+            if ($out -notmatch "version") {
+              throw "$f did not report a version, so it is not a working binary: $out"
+            }
+            Write-Host ($out -split "`r?`n")[0]
+          }
 
       - name: Download Deno
         shell: pwsh
