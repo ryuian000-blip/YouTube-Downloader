@@ -1,5 +1,10 @@
 build/
 dist/
+# The full build variant's own output folders -- build.bat/build.command
+# keep the two variants apart so neither clobbers the other's PyInstaller
+# cache (see build.spec).
+build-full/
+dist-full/
 __pycache__/
 *.pyc
 .venv/

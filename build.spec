@@ -33,10 +33,81 @@
 import os
 import sys
 
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
 basedir = os.path.dirname(os.path.abspath(SPEC))
 is_windows = sys.platform.startswith("win")
 is_macos = sys.platform == "darwin"
 exe_suffix = ".exe" if is_windows else ""
+
+# ---------------------------------------------------------------------------
+# Build variant -- "standard" (default) or "full".
+#
+#   pyinstaller build.spec                          -> standard
+#   YTDL_BUILD_VARIANT=full pyinstaller build.spec  -> full
+#
+# The ONLY difference is whether local transcription is bundled. Both
+# variants contain the same app, the same two executables, and the same
+# ffmpeg/ffprobe/deno; "full" additionally carries faster-whisper and
+# CTranslate2 so a caption-less video can be transcribed on the machine.
+#
+# Why this is a variant and not just always-on: transcription is the only
+# feature in here with a native-code dependency -- a ~59MB CTranslate2
+# DLL, ONNX Runtime for the voice-activity filter, numpy and tokenizers.
+# Measured on Windows at v1.0.1: 494MB -> 683MB unpacked, 205MB -> 281MB
+# zipped, so +76MB (+37%) on the download. The large majority of YouTube
+# videos have captions and need none of it, so making every downloader
+# pay that to serve the minority who hit a caption-less video is the
+# wrong default. Two assets, clearly labelled, is the trade.
+#
+# What is deliberately NOT bundled: CUDA. CTranslate2 resolves
+# cublas64_12.dll at runtime and those libraries are ~560MB on their own,
+# which would roughly triple the download to serve the few machines that
+# have an NVIDIA GPU *and* no CUDA Toolkit already. Without them the GPU
+# load raises and transcript.py's existing CPU fallback takes over, so a
+# Release user transcribes on CPU unless they have the Toolkit installed.
+# See README.md's note under the transcription section.
+#
+# Why not two spec files: everything else about the two builds has to stay
+# identical, and a copy would drift. One spec, one switch.
+# ---------------------------------------------------------------------------
+variant = os.environ.get("YTDL_BUILD_VARIANT", "standard").strip().lower()
+if variant not in ("standard", "full"):
+    raise SystemExit(
+        f"YTDL_BUILD_VARIANT must be 'standard' or 'full', got {variant!r}"
+    )
+is_full = variant == "full"
+print(f"build.spec: building the {variant.upper()} variant")
+
+# faster-whisper imports ctranslate2 (the inference engine) and, because
+# the app transcribes with vad_filter=True, onnxruntime plus the bundled
+# Silero VAD model. Excluded from the standard build, required by the full
+# one -- one list so the two targets below can never disagree about it.
+TRANSCRIBE_MODULES = ["faster_whisper", "ctranslate2", "onnxruntime"]
+
+# Neither faster-whisper nor CTranslate2 ships a PyInstaller hook, and
+# both have pieces static analysis cannot see:
+#   - faster_whisper/assets/silero_vad_v6.onnx is opened by path at
+#     runtime (utils.get_assets_path()), not imported.
+#   - ctranslate2's DLLs sit next to its .pyd and are loaded by the OS
+#     loader / lazily by ctranslate2.dll itself; cudnn64_9.dll in
+#     particular is only pulled in when a CUDA device is actually used,
+#     so dependency scanning the .pyd alone misses it.
+# collect_* resolve both from the installed package, so this follows
+# whatever version requirements.txt happens to pin.
+transcribe_datas = []
+transcribe_binaries = []
+transcribe_hiddenimports = []
+if is_full:
+    transcribe_datas += collect_data_files("faster_whisper")
+    transcribe_binaries += collect_dynamic_libs("ctranslate2")
+    transcribe_hiddenimports += [
+        "faster_whisper",
+        "ctranslate2",
+        # Reached through faster_whisper.vad, which the transcribe path
+        # only touches at call time.
+        "onnxruntime",
+    ]
 
 
 def _binary(filename: str):
@@ -72,20 +143,25 @@ icon = icon_path if os.path.isfile(icon_path) else None
 a = Analysis(
     ["main.py"],
     pathex=[basedir],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=[],
+    binaries=binaries + transcribe_binaries,
+    datas=datas + transcribe_datas,
+    hiddenimports=transcribe_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # The GUI never transcribes, serves MCP, or runs tests -- but
-    # ytdl_engine.transcript imports faster_whisper inside a function, and
-    # PyInstaller's analysis follows function-level imports, which would
-    # drag ctranslate2 and its ~100MB+ of native libs into a build that
-    # can't use them. These are agent-surface dependencies (ytdl_cli.py /
-    # ytdl_mcp.py), installed in the dev venv and deliberately left out of
-    # the shipped app.
-    excludes=["faster_whisper", "ctranslate2", "mcp", "pytest", "onnxruntime"],
+    # The GUI never serves MCP or runs tests. Transcription is the
+    # variant switch: ytdl_engine.transcript imports faster_whisper inside
+    # a function and PyInstaller's analysis follows function-level
+    # imports, so in a STANDARD build these have to be named here or
+    # ctranslate2's native libs come along anyway.
+    #
+    # In a FULL build they stay in -- note this is currently belt and
+    # braces for the GUI specifically, because no app/ file calls
+    # get_transcript at all yet (CODE_AUDIT.md M9): transcription is
+    # reached through ytdl-agent, the other executable. Kept in step with
+    # the agent target anyway, so that wiring the GUI up to it later is a
+    # one-file change and not a build mystery.
+    excludes=["mcp", "pytest"] + ([] if is_full else TRANSCRIBE_MODULES),
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -128,8 +204,8 @@ exe = EXE(
 a_agent = Analysis(
     ["agent_entry.py"],
     pathex=[basedir],
-    binaries=[],
-    datas=[],
+    binaries=transcribe_binaries,
+    datas=transcribe_datas,
     hiddenimports=[
         # Reached only via runtime dispatch in agent_entry/ytdl_mcp, so
         # static analysis alone doesn't always pull the whole MCP stack in.
@@ -137,14 +213,18 @@ a_agent = Analysis(
         "mcp.server.mcpserver",
         "ytdl_cli",
         "ytdl_mcp",
-    ],
+    ]
+    + transcribe_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # No Qt in the console tool, and faster-whisper stays a dev-venv
-    # extra (see requirements.txt) rather than ~100MB+ of bundled native
-    # libs -- transcripts fall back to it only for caption-less videos.
-    excludes=["PySide6", "shiboken6", "faster_whisper", "ctranslate2", "pytest"],
+    # No Qt in the console tool either way. Transcription follows the
+    # variant, same as the GUI above: in a standard build faster-whisper
+    # stays a dev-venv extra (see requirements.txt) and get_transcript
+    # serves only captioned videos; in a full build the agent surface
+    # transcribes caption-less ones too.
+    excludes=["PySide6", "shiboken6", "pytest"]
+    + ([] if is_full else TRANSCRIBE_MODULES),
     noarchive=False,
 )
 pyz_agent = PYZ(a_agent.pure)
@@ -203,7 +283,7 @@ if is_macos:
         info_plist={
             "CFBundleName": "YouTube Downloader",
             "CFBundleDisplayName": "YouTube Downloader",
-            "CFBundleShortVersionString": "1.0.0",
+            "CFBundleShortVersionString": "1.0.1",
             "NSHighResolutionCapable": True,
             # This app doesn't have an Apple Developer signing identity,
             # so it isn't signed or notarized (see README's "Building the

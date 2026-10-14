@@ -369,7 +369,13 @@ def _environment_report() -> dict:
 
         whisper = "installed"
     except ImportError:
-        whisper = "not installed"
+        # Deliberately NOT appended to `problems` (so `ready` stays true):
+        # captioned videos need none of it. Still says where to get it,
+        # and says it differently in a shipped build where pip is not an
+        # option -- see whisper_remedy().
+        from ytdl_engine.transcript import whisper_remedy
+
+        whisper = "not installed — " + whisper_remedy()
 
     from ytdl_engine.transcript import cuda_available
 

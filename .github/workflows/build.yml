@@ -14,6 +14,24 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+    # Two assets per platform, same commit, same spec: "standard" and
+    # "full" (adds local transcription -- faster-whisper + CTranslate2,
+    # see build.spec's variant block for the size reasoning). Separate
+    # jobs rather than one job building twice, so they run in parallel
+    # and each gets a clean runner -- no chance of one variant's
+    # PyInstaller cache leaking into the other.
+    #
+    # fail-fast: false deliberately. The standard asset is the one almost
+    # everyone downloads; a broken full build must not also cancel it.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: standard
+            suffix: ""
+          - variant: full
+            suffix: "-full"
+    name: build-windows (${{ matrix.variant }})
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +67,8 @@ jobs:
           Remove-Item deno.zip
 
       - name: Build with PyInstaller
+        env:
+          YTDL_BUILD_VARIANT: ${{ matrix.variant }}
         run: pyinstaller build.spec
 
       - name: Add the user-facing docs
@@ -75,13 +95,16 @@ jobs:
         # Hyphens, no spaces: GitHub rewrites spaces to dots in release asset
         # filenames, so a name with spaces never survives to the download
         # page and stops matching the instructions in the release notes.
-        run: Compress-Archive -Path "dist/YouTube Downloader" -DestinationPath "dist/YouTube-Downloader-windows.zip"
+        # The folder INSIDE the zip keeps its normal name in both variants,
+        # so the "unzip, run YouTube Downloader.exe" instructions are the
+        # same either way; only the zip filename says which one this is.
+        run: Compress-Archive -Path "dist/YouTube Downloader" -DestinationPath "dist/YouTube-Downloader-windows${{ matrix.suffix }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YouTube-Downloader-windows
-          path: dist/YouTube-Downloader-windows.zip
+          name: YouTube-Downloader-windows${{ matrix.suffix }}
+          path: dist/YouTube-Downloader-windows${{ matrix.suffix }}.zip
 
   build-macos:
     # GitHub's macos-latest runners are Apple Silicon (arm64), so this
@@ -89,6 +112,19 @@ jobs:
     # both match that. Friends on Intel Macs would need Rosetta (usually
     # already installed) or a separate x86_64 runner.
     runs-on: macos-latest
+    # Same two variants as the Windows job above. Note that on Apple
+    # Silicon the full variant is CPU-only by definition -- CTranslate2
+    # has no CUDA path on a Mac -- so transcription there is slower than
+    # on an NVIDIA machine, not absent.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: standard
+            suffix: ""
+          - variant: full
+            suffix: "-full"
+    name: build-macos (${{ matrix.variant }})
     steps:
       - uses: actions/checkout@v4
 
@@ -149,6 +185,8 @@ jobs:
           chmod +x deno
 
       - name: Build with PyInstaller
+        env:
+          YTDL_BUILD_VARIANT: ${{ matrix.variant }}
         run: pyinstaller build.spec
 
       - name: Ad-hoc codesign the app bundle
@@ -188,13 +226,13 @@ jobs:
           cp "How To Open YouTube Downloader.html" dist/stage/
           cp "CONNECT-TO-CLAUDE.md" dist/stage/
           cp "README.md" dist/stage/
-          ditto -c -k dist/stage "dist/YouTube-Downloader-macos.zip"
+          ditto -c -k dist/stage "dist/YouTube-Downloader-macos${{ matrix.suffix }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YouTube-Downloader-macos
-          path: dist/YouTube-Downloader-macos.zip
+          name: YouTube-Downloader-macos${{ matrix.suffix }}
+          path: dist/YouTube-Downloader-macos${{ matrix.suffix }}.zip
 
   release:
     # Only for tag pushes. Turns the two build artifacts into a public

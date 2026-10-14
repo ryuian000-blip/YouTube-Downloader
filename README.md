@@ -11,8 +11,27 @@ below).
 
 ## Just want the app?
 
-Grab the latest [**Release**](../../releases/latest) — one zip per
-platform, everything included (no Python, no ffmpeg install).
+Grab the latest [**Release**](../../releases/latest) — everything
+included (no Python, no ffmpeg install).
+
+There are two zips per platform. **Take the standard one** unless you
+know you need the other:
+
+| | Standard | Full |
+|---|---|---|
+| File | `YouTube-Downloader-windows.zip` | `YouTube-Downloader-windows-full.zip` |
+| Downloads, subtitles, info, frames | yes | yes |
+| Transcripts of videos **with** captions | yes | yes |
+| Transcripts of videos with **no** captions | no | yes |
+| Windows download | ~205 MB | ~281 MB |
+
+Caption-less videos have to be transcribed on your own machine, which
+needs a speech-recognition engine too big to put in everyone's download
+— hence the second zip. Most videos have captions and need none of it.
+Note that transcription is reached through `ytdl-agent` (see
+[Giving Claude Code eyes and ears](#giving-claude-code-eyes-and-ears-for-youtube)),
+not from the app's own window, so the full zip is only worth taking if
+you use that.
 
 1. Unzip. **Keep the folder together** — the app needs `_internal` beside it.
 2. Run `YouTube Downloader.exe` (Windows) or drag the `.app` to
@@ -67,6 +86,12 @@ temp folder on every launch. Keep the exe and `_internal` together.
 **macOS:** double-click `build.command` (same behavior as `build.bat`).
 Produces `dist/YouTube Downloader.app`, a real double-clickable app bundle
 (via PyInstaller's `BUNDLE()`, see `build.spec`).
+
+**The full variant:** `build.bat full` / `./build.command full` builds the
+one with local transcription bundled, into `dist-full/` (separate folders
+so the two variants can't clobber each other's PyInstaller cache). Either
+script with no argument builds the standard variant, same as always. CI
+builds both for every tag — see `.github/workflows/build.yml`.
 
 **Manually:**
 
@@ -305,7 +330,16 @@ no cloud, no per-video cost. **That fallback uses an NVIDIA GPU when the
 machine has one**, which is roughly 5x faster: measured on a 22-minute
 video with the `small` model, an RTX 4070 Laptop took 106s against 565s
 on CPU (12.6x vs 2.4x realtime). It falls back to CPU on its own when
-there's no GPU, so nothing to configure either way. Frames are sampled, not exhaustive: a
+there's no GPU, so nothing to configure either way.
+
+A caveat for the GPU path in a **downloaded Release**: CTranslate2 loads
+cuBLAS at runtime and that is not bundled (`cublas64_12.dll` plus
+`cublasLt64_12.dll` are ~560 MB — far more than the engine itself). So
+the GPU is used only on a machine that also has the NVIDIA CUDA Toolkit
+installed; everywhere else the load fails and the same automatic CPU
+fallback takes over. CPU transcription is the normal case for a Release
+user, and it works — just slower. In a source checkout this is the same
+question of whether cuBLAS is on `PATH`. Frames are sampled, not exhaustive: a
 20-minute video is ~36,000 frames, so the tools default to one per 10s,
 support scene-change detection, and cap output rather than silently
 dumping thousands of files.

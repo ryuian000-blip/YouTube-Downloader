@@ -6,9 +6,26 @@ REM
 REM Expects ffmpeg.exe, ffprobe.exe, and deno.exe to already be sitting in
 REM this same folder -- build.spec bundles them if present and silently
 REM skips any that are missing (see README.md).
+REM
+REM   build.bat        -> standard build (no local transcription)
+REM   build.bat full   -> full build, with faster-whisper + CTranslate2
+REM
+REM The two go to SEPARATE dist/ and build/ folders so one doesn't
+REM clobber the other and PyInstaller can't reuse the wrong variant's
+REM cached analysis -- that would silently produce a "full" build with
+REM transcription stripped out, or vice versa.
 
 cd /d "%~dp0"
 setlocal
+
+set "YTDL_BUILD_VARIANT=standard"
+set "DIST_DIR=dist"
+set "WORK_DIR=build"
+if /i "%~1"=="full" (
+    set "YTDL_BUILD_VARIANT=full"
+    set "DIST_DIR=dist-full"
+    set "WORK_DIR=build-full"
+)
 
 where py >nul 2>nul
 if %errorlevel%==0 (
@@ -76,10 +93,10 @@ if %MISSING%==1 (
     echo.
 )
 
-echo Building YouTube Downloader.exe with PyInstaller...
+echo Building YouTube Downloader.exe with PyInstaller ^(%YTDL_BUILD_VARIANT% variant^)...
 echo ^(this can take a couple of minutes^)
 echo.
-python -m PyInstaller build.spec
+python -m PyInstaller build.spec --distpath "%DIST_DIR%" --workpath "%WORK_DIR%"
 if errorlevel 1 (
     echo.
     echo Build failed. See the error above.
@@ -89,13 +106,13 @@ if errorlevel 1 (
 
 REM User-facing docs go NEXT TO the exe, not inside _internal where
 REM PyInstaller would put them and nobody would ever find them.
-copy /Y "README.md" "dist\YouTube Downloader\" >nul 2>nul
-copy /Y "CONNECT-TO-CLAUDE.md" "dist\YouTube Downloader\" >nul 2>nul
-copy /Y "How To Open YouTube Downloader (Windows).html" "dist\YouTube Downloader\" >nul 2>nul
+copy /Y "README.md" "%DIST_DIR%\YouTube Downloader\" >nul 2>nul
+copy /Y "CONNECT-TO-CLAUDE.md" "%DIST_DIR%\YouTube Downloader\" >nul 2>nul
+copy /Y "How To Open YouTube Downloader (Windows).html" "%DIST_DIR%\YouTube Downloader\" >nul 2>nul
 
 echo.
 echo Done. The finished app is at:
-echo   %cd%\dist\YouTube Downloader\YouTube Downloader.exe
+echo   %cd%\%DIST_DIR%\YouTube Downloader\YouTube Downloader.exe
 echo.
 echo That folder also contains ytdl-agent.exe, which connects the app to
 echo Claude Code ^(see CONNECT-TO-CLAUDE.md in the same folder^).

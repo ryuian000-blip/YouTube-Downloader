@@ -14,6 +14,7 @@ know the video's language until it listens).
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,42 @@ from .info import MODE_AUDIO_ONLY, extract_info
 _CAPTION_FORMATS = ("json3", "srv3", "srv1", "vtt")
 
 DEFAULT_WHISPER_MODEL = "small"
+
+
+def whisper_remedy() -> str:
+    """How to GET local transcription, phrased for the build you're in.
+
+    "pip install faster-whisper" is the correct answer in a checkout and
+    useless in a shipped build: a Release download deliberately contains
+    no Python and no pip, so sending someone there for a feature the app
+    advertises dead-ends them. The release ships a second, larger asset
+    with transcription bundled -- a frozen build names THAT instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return "Run: pip install faster-whisper"
+
+    if sys.platform == "darwin":
+        asset = "YouTube-Downloader-macos-full.zip"
+    elif sys.platform.startswith("win"):
+        asset = "YouTube-Downloader-windows-full.zip"
+    else:
+        asset = "the '-full' asset"
+    return (
+        f"Download {asset} from the project's Releases page — it is this "
+        "same app with the transcription engine built in."
+    )
+
+
+def whisper_unavailable_message() -> str:
+    """The error a caption-less video raises when this build can't transcribe."""
+    if not getattr(sys, "frozen", False):
+        return "faster-whisper isn't installed. " + whisper_remedy()
+    return (
+        "This video has no captions, so it has to be transcribed here, and "
+        "this is the standard download — it doesn't include the "
+        "transcription engine. " + whisper_remedy() + " Videos that do have "
+        "captions work fine in this copy."
+    )
 
 
 @dataclass
@@ -323,9 +360,7 @@ def transcribe_audio_file(
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:  # pragma: no cover - depends on env
-        raise EngineError(
-            "faster-whisper isn't installed. Run: pip install faster-whisper"
-        ) from exc
+        raise EngineError(whisper_unavailable_message()) from exc
 
     device, compute_type = resolve_whisper_device(device)
 

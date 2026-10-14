@@ -87,7 +87,7 @@ async def _resolve_target_dir(output_dir: str | None, settings) -> Path:
 
 mcp = MCPServer(
     name="youtube-downloader",
-    version="1.0.0",
+    version="1.0.1",
     instructions=(
         "Search, download, transcribe, and visually inspect YouTube videos.\n\n"
         "Typical flow for 'what does this video say/show?':\n"
@@ -605,9 +605,15 @@ async def check_setup_tool() -> dict[str, Any]:
 
         payload["faster_whisper"] = "installed"
     except ImportError:
+        from ytdl_engine.transcript import whisper_remedy
+
+        # Not a `ready: false` problem -- captioned videos, the large
+        # majority, need none of this. The remedy differs between a
+        # checkout and a shipped build: one wants pip, the other wants
+        # the "-full" release asset.
         payload["faster_whisper"] = (
             "not installed — transcripts work for videos with captions, but "
-            "caption-less videos need: pip install faster-whisper"
+            "caption-less videos can't be transcribed. " + whisper_remedy()
         )
     return payload
 

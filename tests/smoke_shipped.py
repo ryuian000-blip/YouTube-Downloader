@@ -8,6 +8,10 @@ built artifact, not against the source tree.
 Run after a build:
     .venv/Scripts/python.exe tests/smoke_shipped.py
     .venv/Scripts/python.exe tests/smoke_shipped.py --network
+
+The release ships two variants (see build.spec), which build.bat puts in
+separate folders, so `--dist` picks which one to prove:
+    .venv/Scripts/python.exe tests/smoke_shipped.py --dist dist-full
 """
 
 from __future__ import annotations
@@ -25,23 +29,31 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 
-def agent_executable() -> Path:
+def dist_dir(argv: list[str]) -> Path:
+    """Which build to test: `--dist dist-full` for the full variant."""
+    if "--dist" in argv:
+        return REPO_ROOT / argv[argv.index("--dist") + 1]
+    return REPO_ROOT / "dist"
+
+
+def agent_executable(dist: Path) -> Path:
     """The built console binary, on either platform's layout."""
     candidates = [
-        REPO_ROOT / "dist" / "YouTube Downloader" / "ytdl-agent.exe",
-        REPO_ROOT / "dist" / "YouTube Downloader" / "ytdl-agent",
-        REPO_ROOT / "dist" / "YouTube Downloader.app" / "Contents" / "MacOS" / "ytdl-agent",
+        dist / "YouTube Downloader" / "ytdl-agent.exe",
+        dist / "YouTube Downloader" / "ytdl-agent",
+        dist / "YouTube Downloader.app" / "Contents" / "MacOS" / "ytdl-agent",
     ]
     for path in candidates:
         if path.exists():
             return path
     raise SystemExit(
-        "No built ytdl-agent found. Run a build first (build.bat / build.command)."
+        f"No built ytdl-agent found under {dist.name}/. "
+        "Run a build first (build.bat / build.command)."
     )
 
 
-async def main(with_network: bool) -> int:
-    exe = agent_executable()
+async def main(with_network: bool, dist: Path) -> int:
+    exe = agent_executable(dist)
     print(f"testing shipped binary: {exe}")
 
     env = dict(os.environ)
@@ -104,4 +116,6 @@ async def main(with_network: bool) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main("--network" in sys.argv)))
+    raise SystemExit(
+        asyncio.run(main("--network" in sys.argv, dist_dir(sys.argv)))
+    )

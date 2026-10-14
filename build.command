@@ -6,8 +6,26 @@
 # Windows .exe versions) to already be sitting in this same folder --
 # build.spec bundles them if present and silently skips any that are
 # missing (see README.md).
+#
+#   ./build.command        -> standard build (no local transcription)
+#   ./build.command full   -> full build, with faster-whisper + CTranslate2
+#
+# The two go to SEPARATE dist/ and build/ folders so one doesn't clobber
+# the other and PyInstaller can't reuse the wrong variant's cached
+# analysis -- that would silently produce a "full" build with
+# transcription stripped out, or vice versa.
 
 cd "$(dirname "$0")" || exit 1
+
+if [ "${1:-}" = "full" ]; then
+    export YTDL_BUILD_VARIANT=full
+    DIST_DIR=dist-full
+    WORK_DIR=build-full
+else
+    export YTDL_BUILD_VARIANT=standard
+    DIST_DIR=dist
+    WORK_DIR=build
+fi
 
 pause_and_exit() {
     echo
@@ -69,10 +87,10 @@ if [ "$missing" -eq 1 ]; then
     echo
 fi
 
-echo "Building YouTube Downloader.app with PyInstaller..."
+echo "Building YouTube Downloader.app with PyInstaller ($YTDL_BUILD_VARIANT variant)..."
 echo "(this can take a couple of minutes)"
 echo
-if ! python3 -m PyInstaller build.spec; then
+if ! python3 -m PyInstaller build.spec --distpath "$DIST_DIR" --workpath "$WORK_DIR"; then
     echo
     echo "Build failed. See the error above."
     pause_and_exit
@@ -80,11 +98,11 @@ fi
 
 # Docs land beside the .app (a bundle's insides are not where anyone
 # looks), matching what CI puts in the release zip.
-cp -f "README.md" "CONNECT-TO-CLAUDE.md" "How To Open YouTube Downloader.html" dist/ 2>/dev/null || true
+cp -f "README.md" "CONNECT-TO-CLAUDE.md" "How To Open YouTube Downloader.html" "$DIST_DIR/" 2>/dev/null || true
 
 echo
 echo "Done. The finished app is at:"
-echo "  $(pwd)/dist/YouTube Downloader.app"
+echo "  $(pwd)/$DIST_DIR/YouTube Downloader.app"
 echo
 echo "It also contains ytdl-agent (Contents/MacOS/ytdl-agent), which connects"
 echo "the app to Claude Code -- see CONNECT-TO-CLAUDE.md next to the app."
