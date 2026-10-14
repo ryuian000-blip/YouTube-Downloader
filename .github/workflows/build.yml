@@ -87,28 +87,35 @@ jobs:
           Write-Host "ffprobe: $((Get-Command ffprobe).Source)"
 
       - name: Copy ffmpeg/ffprobe next to the project
+        # NOT `(Get-Command ffmpeg).Source`, which is what this used to do.
+        # That resolves to C:\ProgramData\Chocolatey\bin\ffmpeg.exe -- a
+        # 0.4MB ShimGen *shim*, not ffmpeg. A shim finds its target through
+        # chocolatey's own install tree, so copying one into the bundle
+        # produces an "ffmpeg.exe" that is present, passes every "is it
+        # there?" check the app makes, and then cannot work on any machine
+        # without this exact chocolatey layout -- i.e. every user's. That
+        # is what shipped in v1.0.0 and in every CI build before this one.
+        #
+        # Take the real binaries out of the package's own tools directory
+        # instead, and prove they run before trusting them.
         shell: pwsh
         run: |
-          $ffmpeg = (Get-Command ffmpeg).Source
-          $ffprobe = (Get-Command ffprobe).Source
-          Copy-Item $ffmpeg -Destination .\ffmpeg.exe
-          Copy-Item $ffprobe -Destination .\ffprobe.exe
-          # Sanity-check what actually got copied. Chocolatey puts a small
-          # launcher "shim" on PATH as well as the real binary, and a shim
-          # copied out of chocolatey\bin cannot find its target any more --
-          # it would bundle cleanly and then fail on the user's machine,
-          # which is the worst possible place to discover it. A real static
-          # ffmpeg is tens of MB; a shim is well under one.
-          foreach ($f in @(".\ffmpeg.exe", ".\ffprobe.exe")) {
-            $mb = [math]::Round((Get-Item $f).Length / 1MB, 1)
-            Write-Host "$f -> $mb MB"
-            if ($mb -lt 5) {
-              throw "$f is only $mb MB -- that looks like a chocolatey shim, not the real binary."
+          foreach ($tool in @("ffmpeg", "ffprobe")) {
+            $real = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib" -Recurse `
+                        -Filter "$tool.exe" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Length -gt 5MB } |
+                    Sort-Object Length -Descending |
+                    Select-Object -First 1
+            if (-not $real) {
+              throw "Could not find a real $tool.exe under chocolatey\lib (only a shim?)."
             }
+            Write-Host "$tool -> $($real.FullName) ($([math]::Round($real.Length/1MB,1)) MB)"
+            Copy-Item $real.FullName -Destination ".\$tool.exe" -Force
           }
-          # And prove it runs, here, rather than trusting the file size.
-          & .\ffmpeg.exe -version | Select-Object -First 1
+          # Prove what landed actually runs, rather than trusting its size.
+          & .\ffmpeg.exe -version  | Select-Object -First 1
           & .\ffprobe.exe -version | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0) { throw "the copied ffprobe.exe did not run" }
 
       - name: Download Deno
         shell: pwsh
