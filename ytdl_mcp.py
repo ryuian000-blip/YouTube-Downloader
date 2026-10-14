@@ -87,7 +87,7 @@ async def _resolve_target_dir(output_dir: str | None, settings) -> Path:
 
 mcp = MCPServer(
     name="youtube-downloader",
-    version="1.0.1",
+    version="1.0.2",
     instructions=(
         "Search, download, transcribe, and visually inspect YouTube videos.\n\n"
         "Typical flow for 'what does this video say/show?':\n"

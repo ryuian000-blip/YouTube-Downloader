@@ -9,6 +9,20 @@ mcp                 # MCP server SDK (2.x: FastMCP is now MCPServer)
 faster-whisper      # local transcription, only for videos with no captions
 pytest              # the test suite in tests/
 
+# faster-whisper's audio decoder calls
+#   av.open(input_file, mode="r", metadata_errors="ignore")
+# but its own metadata asks only for `av>=11`, unbounded. PyAV 19.0 drops
+# the metadata_errors parameter, so a fresh install takes 19.x and every
+# transcription dies with
+#   Transcription failed: open() got an unexpected keyword argument 'metadata_errors'
+#
+# This is exactly the kind of break that does not show up in a dev venv
+# (whose `av` was resolved months ago and is still 18.x) and only appears
+# in CI, which resolves fresh on every build -- it shipped a full build
+# that could not transcribe at all in v1.0.1. Pin it until faster-whisper
+# supports PyAV 19.
+av<19
+
 # yt-dlp's JS challenge solver scripts. Deno alone (the bundled binary) is
 # just the engine -- without this package there are no solver scripts for
 # it to run, YouTube's nsig/PO-token challenges silently fail, and most

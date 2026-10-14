@@ -51,6 +51,18 @@ jobs:
         # stable 2026.7.4). See the note in requirements.txt.
         run: pip install -U --pre "yt-dlp[default]"
 
+      - name: Check the transcription stack actually works
+        # Full build only -- it is the only one that carries this stack,
+        # and transcribing is its entire reason to exist. CI resolves
+        # these versions fresh every time, and faster-whisper's own
+        # metadata does not bound `av`, so a PyAV release can and did
+        # break transcription without anything here noticing: v1.0.1
+        # shipped a full build that could not transcribe at all. `import
+        # faster_whisper` succeeds in that state, so only decoding real
+        # audio catches it. See tests/check_transcribe_stack.py.
+        if: matrix.variant == 'full'
+        run: python tests/check_transcribe_stack.py
+
       - name: Install ffmpeg via Chocolatey
         # Retried and then VERIFIED, because `choco install` exits 0 when
         # the community feed is unreachable, having installed nothing:
@@ -204,6 +216,11 @@ jobs:
       - name: Update yt-dlp to nightly
         # Same reasoning as the Windows job -- see requirements.txt.
         run: pip install -U --pre "yt-dlp[default]"
+
+      - name: Check the transcription stack actually works
+        # Same reasoning as the Windows job above.
+        if: matrix.variant == 'full'
+        run: python tests/check_transcribe_stack.py
 
       - name: Download static ffmpeg/ffprobe (macOS arm64)
         # NOT `brew install ffmpeg` + copy the binary: Homebrew's ffmpeg is

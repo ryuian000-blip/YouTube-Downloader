@@ -287,7 +287,7 @@ if is_macos:
         info_plist={
             "CFBundleName": "YouTube Downloader",
             "CFBundleDisplayName": "YouTube Downloader",
-            "CFBundleShortVersionString": "1.0.1",
+            "CFBundleShortVersionString": "1.0.2",
             "NSHighResolutionCapable": True,
             # This app doesn't have an Apple Developer signing identity,
             # so it isn't signed or notarized (see README's "Building the
