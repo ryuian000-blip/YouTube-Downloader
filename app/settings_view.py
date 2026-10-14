@@ -15,7 +15,6 @@ written); everything else commits on change.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -39,7 +38,7 @@ from app.widgets import (
     IconButton,
     set_role,
 )
-from ytdl_engine.config import Settings, load_settings, settings_path, update_settings
+from ytdl_engine.config import load_settings, settings_path, update_settings
 from ytdl_engine.download import cache_root, cache_size_bytes, clear_cache
 
 # (label, value) -- None means "no cap", which the engine treats as best
@@ -354,6 +353,11 @@ class SettingsPage(QWidget):
             self._select(self._frame_quality_combo, settings.frame_download_height)
             self._whisper_checkbox.setChecked(settings.allow_whisper)
             self._select(self._whisper_combo, settings.whisper_model)
+            # Every control the page owns is restored here. Omitting this
+            # one meant a saved whisper_device of "cpu" displayed as
+            # "Automatic", so the user could not see -- or undo -- their
+            # own choice; the combo was only ever setEnabled() below.
+            self._select(self._device_combo, settings.whisper_device)
             self._select(self._cache_combo, settings.cache_max_mb)
         finally:
             self._loading = False
@@ -387,12 +391,25 @@ class SettingsPage(QWidget):
         except OSError:
             size_mb = 0.0
         self._cache_label.setText(f"Currently using {size_mb:.0f} MB")
+        # The path, not just the size: "Clear now" deletes the contents of
+        # a folder, and a button that deletes something should say what.
+        # Shown as a tooltip on both the label and the button so it is
+        # reachable from whichever one the user is looking at, without
+        # adding a long unbreakable path to the page's minimum width.
+        try:
+            location = str(cache_root())
+        except OSError:
+            return
+        hint = f"Working copies are kept in {location}\n“Clear now” empties that folder."
+        self._cache_label.setToolTip(hint)
+        self._clear_button.setToolTip(hint)
 
     def _save(self, changes: dict) -> None:
         if self._loading:
             return
         try:
-            update_settings(changes)
+            # The user is operating the Settings page directly.
+            update_settings(changes, allow_user_only=True)
         except Exception:  # noqa: BLE001 -- a read-only disk shouldn't
             return         # take the window down; the control just won't stick.
         if "allow_whisper" in changes:

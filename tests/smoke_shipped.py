@@ -49,7 +49,9 @@ async def main(with_network: bool) -> int:
     env["YTDL_SETTINGS_FILE"] = str(
         Path(tempfile.gettempdir()) / "ytdl-shipped-smoke-settings.json"
     )
-    Path(env["YTDL_SETTINGS_FILE"]).unlink(missing_ok=True)
+    # noqa: ASYNC240 -- a one-off unlink in a manual smoke script, before
+    # any server exists to stall. Not worth a to_thread hop.
+    Path(env["YTDL_SETTINGS_FILE"]).unlink(missing_ok=True)  # noqa: ASYNC240
 
     params = StdioServerParameters(command=str(exe), args=["mcp"], env=env)
     async with stdio_client(params) as (read, write):

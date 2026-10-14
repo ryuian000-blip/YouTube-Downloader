@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QSize, Qt
+from PySide6.QtCore import QPropertyAnimation, QEasingCurve, Qt
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -291,6 +291,10 @@ class MainWindow(QMainWindow):
         self._status_label = QLabel("")
         self._status_label.setProperty("role", "status")
         self._status_label.setWordWrap(True)
+        # Plain text: app-authored today, but this is a QLabel that gets
+        # setText() from a variable, and Qt's AutoText default parses
+        # markup. Being explicit costs nothing and removes the question.
+        self._status_label.setTextFormat(Qt.PlainText)
         self._status_label.setVisible(False)
         layout.addWidget(self._status_label)
 
@@ -360,6 +364,14 @@ class MainWindow(QMainWindow):
         self._video_title_label = QLabel("")
         self._video_title_label.setProperty("role", "posterTitle")
         self._video_title_label.setWordWrap(True)
+        # PlainText, not Qt's AutoText default. This label is filled with
+        # a video title straight from yt-dlp -- i.e. a string any uploader
+        # can choose. AutoText runs mightBeRichText() and parses markup
+        # when it matches, so a title containing an <img src="file://...">
+        # made the app load and render that file, and arbitrary markup
+        # could restyle or impersonate the app's own chrome. Titles are
+        # text; display them as text.
+        self._video_title_label.setTextFormat(Qt.PlainText)
         meta_layout.addWidget(self._video_title_label)
 
         self._chip_row = QHBoxLayout()
@@ -832,7 +844,9 @@ class MainWindow(QMainWindow):
             # file, so it also becomes where CLI/MCP downloads land --
             # one destination for the app and for anything driving it.
             try:
-                update_settings({"download_dir": str(self._output_dir)})
+                update_settings(
+                    {"download_dir": str(self._output_dir)}, allow_user_only=True
+                )
             except Exception:  # noqa: BLE001 -- a read-only disk shouldn't
                 pass          # break the picker; the choice still applies
                               # to this session.
@@ -861,7 +875,11 @@ class MainWindow(QMainWindow):
         return predicted if predicted.exists() else None
 
     def _on_download_clicked(self) -> None:
-        if self._video_info is None or self._download_in_progress:
+        # Same button, two jobs -- see _start_download for why.
+        if self._download_in_progress:
+            self._cancel_download()
+            return
+        if self._video_info is None:
             return
 
         force_overwrite = False
@@ -876,6 +894,11 @@ class MainWindow(QMainWindow):
             # is enough to ask a short yes/no question.
             box = QMessageBox(self)
             box.setWindowTitle("Already downloaded")
+            # PlainText for the same reason as the poster title: this
+            # interpolates an uploader-controlled video title, and here it
+            # sits directly above a Yes/No choice -- the worst place in
+            # the app for injected markup to add convincing-looking text.
+            box.setTextFormat(Qt.PlainText)
             box.setText(f'You already downloaded "{self._video_info.title}". Download it again?')
             box.setIcon(QMessageBox.NoIcon)
             yes_button = box.addButton("Yes", QMessageBox.YesRole)
@@ -921,8 +944,13 @@ class MainWindow(QMainWindow):
         self._last_download_options = options
 
         self._download_in_progress = True
-        self._download_btn.setEnabled(False)
-        self._download_btn.setText("Downloading…")
+        # Stays ENABLED, relabelled "Cancel". A long download used to
+        # leave the user with no way to stop it short of killing the
+        # app -- and on a live stream or a mistaken 4K pick, that is the
+        # only thing they want. Reusing this button rather than adding a
+        # second one keeps the row's carefully-tuned widths unchanged.
+        self._download_btn.setEnabled(True)
+        self._download_btn.setText("Cancel")
         self._progress_bar.setValue(0)
         self._show_progress_status("Starting…", "status")
 
@@ -930,8 +958,22 @@ class MainWindow(QMainWindow):
         self._download_worker.progress.connect(self._on_download_progress)
         self._download_worker.succeeded.connect(self._on_download_succeeded)
         self._download_worker.failed.connect(self._on_download_failed)
+        self._download_worker.cancelled.connect(self._on_download_cancelled)
         self._download_worker.finished.connect(self._reset_download_button)
         self._download_worker.start()
+
+    def _cancel_download(self) -> None:
+        if self._download_worker is None or not self._download_in_progress:
+            return
+        self._download_btn.setEnabled(False)
+        self._download_btn.setText("Cancelling…")
+        self._show_progress_status("Cancelling…", "status")
+        self._download_worker.cancel()
+
+    def _on_download_cancelled(self) -> None:
+        self._progress_bar.setValue(0)
+        # "status", not "error": the user asked for this.
+        self._show_progress_status("Download cancelled.", "status")
 
     def _reset_download_button(self) -> None:
         self._download_in_progress = False
@@ -941,6 +983,35 @@ class MainWindow(QMainWindow):
         # ahead of finished->deleteLater below, so this always clears the
         # reference before the underlying QThread is actually deleted.
         self._download_worker = None
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Stop and join the workers before the window goes away.
+
+        Without this, closing the app mid-download destroyed a running
+        QThread: Qt prints "QThread: Destroyed while thread is still
+        running" and the process can abort during interpreter teardown,
+        while yt-dlp keeps writing to a file nobody is watching.
+
+        The download worker cancels cooperatively and unwinds in a tick
+        or two. FetchWorker has no such hook -- it is blocked inside one
+        extract_info() call with no progress callback to notice a flag --
+        so it only gets requestInterruption() and a bounded wait.
+        terminate() is the last resort for exactly that case: it is
+        genuinely unsafe in general, but the alternative here is the
+        crash above, and the process is exiting anyway.
+        """
+        if self._download_worker is not None and self._download_worker.isRunning():
+            self._download_worker.cancel()
+        if self._fetch_worker is not None and self._fetch_worker.isRunning():
+            self._fetch_worker.requestInterruption()
+
+        for worker in (self._download_worker, self._fetch_worker):
+            if worker is None or not worker.isRunning():
+                continue
+            if not worker.wait(3000):
+                worker.terminate()
+                worker.wait(500)
+        super().closeEvent(event)
 
     def _show_progress_status(self, text: str, role: str) -> None:
         """The status line floats over the thumbnail (see

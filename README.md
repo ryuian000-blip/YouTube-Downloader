@@ -345,16 +345,16 @@ file without you noticing.
 |---|---|---|
 | `download_dir` | OS Downloads folder | Where saved videos go. **Shared with the desktop app** — pick a folder there and it's remembered, and it's where the agent saves too. |
 | `max_height` | `1080` | Quality ceiling for downloads made without an explicit quality. `none` = best available. |
-| `default_mode` / `audio_format` | `video` / `mp3` | Defaults for mode and audio conversion. |
+| `default_mode` / `audio_format` | `video` / `mp3` | Defaults for mode and audio conversion. `default_mode` must be `video`, `video_only` or `audio_only` — note it is `audio_only`, not `audio` (which is the `--mode` flag's spelling); an invalid value is rejected when you set it. |
 | `max_duration_minutes` | `none` (off) | Refuse videos longer than this, *before* downloading. |
 | `max_filesize_mb` | `none` (off) | Refuse files bigger than this, *before* downloading. |
 | `frame_interval_seconds` / `frame_max` / `frame_width` | `10` / `50` / `800` | Frame sampling spacing, cap, and image width. |
 | `frame_download_height` | `480` | Quality of the copy fetched purely to slice frames from. Raise it to read fine print. |
-| `scene_threshold` | `0.3` | Scene-change sensitivity. |
-| `transcript_language` / `whisper_model` | `en` / `small` | Caption language and local-transcription model. |
+| `scene_threshold` | `0.3` | Scene-change sensitivity, used when you pass `--scene-threshold` with no number. |
+| `transcript_language` / `whisper_model` | `en` / `small` | Caption language (also used for the Subtitles option) and local-transcription model. `whisper_model` must be a known size name — a Hugging Face repo id is rejected. |
 | `whisper_device` | `auto` | Where local transcription runs: `auto` (GPU when present), `cuda`, or `cpu`. |
 | `allow_whisper` | `true` | Set false to fail fast on caption-less videos instead of spending minutes transcribing. |
-| `cache_dir` / `cache_max_mb` | temp dir / `5000` | Where working copies live, and when to start evicting the oldest. `none` = never evict. |
+| `cache_dir` / `cache_max_mb` | temp dir / `5000` | Where working copies live, and when to start evicting the oldest. `none` = never evict. `cache_dir` names a *parent*: a `ytdl-agent-cache` folder is always created inside it, and that folder is the only thing pruning or clearing ever touches. Only you can change it (not an assistant) — the app's Settings page shows the full path on hover. |
 
 Two deliberate choices worth knowing:
 
@@ -376,6 +376,33 @@ forever:
 python ytdl_cli.py cache show     # size, video count, current limit
 python ytdl_cli.py cache clear
 ```
+
+## Refusals you may run into
+
+The app says no to three things up front, by design, rather than
+half-doing them:
+
+- **Playlist, channel and search URLs.** `…/playlist?list=`,
+  `…/@handle/videos`, `…/channel/…` and `…/results?search_query=` are
+  refused before any network call. yt-dlp's `noplaylist` only covers a
+  *video* URL that also carries `list=`; a bare playlist URL isn't a
+  video, so it would expand into every entry behind it and still report
+  one success with one path. Use a single video's own link.
+- **Live streams.** A live stream has no end to download to, and reports
+  neither a duration nor a size — so the duration/size guardrails can't
+  fire on it either. Wait for YouTube to publish the recording.
+- **An unknown download mode.** See `default_mode` in the table above.
+
+None of the three is retried: retrying something permanently true just
+delays the real message by a few seconds.
+
+## Cancelling a download
+
+The **Download** button becomes **Cancel** while a download is running.
+It stops cooperatively — yt-dlp unwinds normally and leaves a resumable
+`.part` file rather than a truncated output file. Closing the window
+mid-download does the same thing and waits for the worker to finish
+before exiting.
 
 ## Project layout
 

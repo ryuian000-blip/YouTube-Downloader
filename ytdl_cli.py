@@ -194,10 +194,16 @@ def cmd_transcript(args) -> None:
 
 
 def cmd_frames(args) -> None:
+    # -1.0 is the "--scene-threshold with no number" sentinel; see the
+    # flag's definition in build_parser.
+    scene_threshold = args.scene_threshold
+    if scene_threshold is not None and scene_threshold < 0:
+        scene_threshold = load_settings().scene_threshold
+
     frame_set = extract_frames(
         args.target,
         interval=args.interval,
-        scene_threshold=args.scene_threshold,
+        scene_threshold=scene_threshold,
         start=parse_timestamp(args.start),
         end=parse_timestamp(args.end),
         max_frames=args.max,
@@ -230,7 +236,11 @@ def cmd_config(args) -> None:
             key, _, value = item.partition("=")
             changes[key.strip()] = value.strip()
         try:
-            updated = update_settings(changes)
+            # allow_user_only: this subcommand IS the user changing their
+            # own settings by hand -- it's what the app and the skill both
+            # point them at for a lasting change. The restriction exists
+            # to stop an assistant doing it through the MCP tool.
+            updated = update_settings(changes, allow_user_only=True)
         except KeyError as exc:
             # exc.args[0], not str(exc): KeyError stringifies with the
             # message wrapped in quotes, which reads as a typo in output.
@@ -386,7 +396,8 @@ def cmd_setup(args) -> None:
     settings = load_settings()
 
     if args.confirm:
-        update_settings({"defaults_confirmed": True})
+        # The user ran `setup --confirm` themselves; that is the consent.
+        update_settings({"defaults_confirmed": True}, allow_user_only=True)
         emit(
             {
                 "ok": True,
@@ -478,14 +489,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Timestamped transcript (YouTube captions when available, else Whisper).",
     )
     p.add_argument("url")
-    p.add_argument("--lang", default="en", help="Caption language (default en; 'auto' for Whisper autodetect).")
+    # default=None throughout, NOT the built-in constant. The engine
+    # resolves an unset argument against the user's settings (see
+    # extract_frames' and get_transcript's docstrings, which say so
+    # explicitly); putting a concrete default here instead meant argparse
+    # always passed a value, so the settings file was silently outranked
+    # by a flag the user never typed. `config set whisper_model=medium`
+    # had no effect on this command.
+    p.add_argument("--lang", default=None,
+                   help="Caption language. Default: the transcript_language setting "
+                        "('auto' for Whisper autodetect).")
     p.add_argument("--format", choices=["json", "text", "srt"], default="json")
     p.add_argument("--start", default=None, help="Only segments from this time (e.g. 4:10).")
     p.add_argument("--end", default=None, help="Only segments up to this time (e.g. 4:30).")
     p.add_argument("--force-whisper", action="store_true",
                    help="Ignore YouTube captions and transcribe locally.")
-    p.add_argument("--model", default=DEFAULT_WHISPER_MODEL,
-                   help=f"Whisper model size (default {DEFAULT_WHISPER_MODEL}).")
+    p.add_argument("--model", default=None,
+                   help="Whisper model size. Default: the whisper_model setting "
+                        f"(ships as {DEFAULT_WHISPER_MODEL}).")
     p.add_argument("--device", default=None, choices=["auto", "cuda", "cpu"],
                    help="Where local transcription runs. Default: the "
                         "whisper_device setting (auto = GPU when present).")
@@ -495,15 +516,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", help="YouTube URL or path to a local video file.")
     p.add_argument("--interval", type=float, default=None,
                    help="Seconds between frames (default 10, or finer for short ranges).")
-    p.add_argument("--scene-threshold", type=float, default=None,
-                   help="Use scene-change detection instead, e.g. 0.3.")
+    # nargs="?" so the flag works with or without a number. Given bare,
+    # it means "scene mode, at my configured sensitivity" -- which is
+    # what makes the scene_threshold setting real. Before this there was
+    # no way to reach it from any surface: the value was always passed
+    # explicitly, so the setting was read by nothing at all.
+    #
+    # The -1.0 sentinel is safe because the engine clamps to [0.05, 0.95]
+    # and a negative sensitivity is meaningless, so it cannot collide
+    # with a value a user might actually mean.
+    p.add_argument("--scene-threshold", type=float, nargs="?", const=-1.0, default=None,
+                   help="Use scene-change detection instead, e.g. 0.3. Pass the flag "
+                        "without a number to use the scene_threshold setting.")
     p.add_argument("--start", default=None, help="Start time, e.g. 4:10.")
     p.add_argument("--end", default=None, help="End time, e.g. 4:30.")
-    p.add_argument("--max", type=int, default=DEFAULT_MAX_FRAMES,
-                   help=f"Max frames (default {DEFAULT_MAX_FRAMES}).")
-    p.add_argument("--width", type=int, default=800, help="Frame width in px (default 800).")
-    p.add_argument("--quality", type=int, default=480,
-                   help="Video height to download for extraction (default 480).")
+    p.add_argument("--max", type=int, default=None,
+                   help=f"Max frames. Default: the frame_max setting (ships as {DEFAULT_MAX_FRAMES}).")
+    p.add_argument("--width", type=int, default=None,
+                   help="Frame width in px. Default: the frame_width setting.")
+    p.add_argument("--quality", type=int, default=None,
+                   help="Video height to download for extraction. Default: the "
+                        "frame_download_height setting.")
     p.add_argument("--out", default=None, help="Output directory (default: a temp cache dir).")
     p.set_defaults(func=cmd_frames)
 

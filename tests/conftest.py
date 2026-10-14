@@ -46,6 +46,20 @@ def isolated_settings(tmp_path, monkeypatch):
     for name in known_fields():
         monkeypatch.delenv(f"YTDL_{name.upper()}", raising=False)
 
+    # Set AFTER the delenv loop above, which would otherwise clear it.
+    #
+    # Without this the cache settings resolve to the real system temp dir,
+    # so any test that touched cache_size_bytes() walked the developer's
+    # actual working cache -- 712MB of it on the machine this was found
+    # on, which is why the Settings-page fixtures were the slowest in the
+    # suite at 4-6.7s each. It also meant a test could delete real
+    # cached files.
+    monkeypatch.setenv("YTDL_CACHE_DIR", str(tmp_path / "cache"))
+    # The GUI's history store is separate from engine settings and was not
+    # redirected at all: it built %APPDATA%\YT Downloader Tests\ and loaded
+    # whatever the previous suite run had written into it.
+    monkeypatch.setenv("YTDL_APP_DATA_DIR", str(tmp_path / "appdata"))
+
 
 @pytest.fixture(scope="session")
 def qapp():

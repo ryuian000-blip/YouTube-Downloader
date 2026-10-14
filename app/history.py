@@ -16,6 +16,7 @@ for speed and so browsing history doesn't depend on connectivity.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,9 +42,22 @@ class HistoryEntry:
 
 
 class HistoryStore:
-    def __init__(self) -> None:
-        app_data = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-        base = Path(app_data) if app_data else Path.home() / ".youtube-downloader"
+    def __init__(self, base: Path | None = None) -> None:
+        if base is None:
+            # YTDL_APP_DATA_DIR mirrors YTDL_SETTINGS_FILE in the engine:
+            # one env var to put this app's data somewhere else. Tests use
+            # it so a suite run cannot read or write the developer's real
+            # history -- it used to create a folder under %APPDATA% and
+            # load whatever a previous run had left there, which made the
+            # history tests depend on each other across runs.
+            override = os.environ.get("YTDL_APP_DATA_DIR")
+            if override:
+                base = Path(override).expanduser()
+            else:
+                app_data = QStandardPaths.writableLocation(
+                    QStandardPaths.AppDataLocation
+                )
+                base = Path(app_data) if app_data else Path.home() / ".youtube-downloader"
         self._dir = base
         self._thumb_dir = base / "history_thumbnails"
         self._thumb_dir.mkdir(parents=True, exist_ok=True)

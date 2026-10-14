@@ -14,6 +14,7 @@ from typing import Any
 from .core import (
     EngineError,
     base_opts,
+    ensure_single_video_url,
     format_timestamp,
     resolve_runtime_paths,
     run_with_retry,
@@ -147,7 +148,10 @@ def extract_info(
 ) -> dict:
     """Metadata only (no download). Raises EngineError with a
     user-presentable message on failure."""
-    import yt_dlp
+    # Before the network call, not after: resolving a channel or playlist
+    # URL means yt-dlp walking every entry in it, which is slow enough to
+    # look like the app has hung.
+    ensure_single_video_url(url)
 
     js_runtime_path, _ = resolve_runtime_paths(js_runtime_path, None)
     opts = base_opts(js_runtime_path, skip_download=True)
@@ -292,8 +296,8 @@ def search_youtube(
     opts = base_opts(js_runtime_path, skip_download=True, extract_flat="in_playlist")
 
     def _once() -> dict:
-        import yt_dlp
-
+        # yt_dlp comes from the enclosing scope's lazy import above --
+        # see core.py on why this package never imports it at module level.
         with yt_dlp.YoutubeDL(opts) as ydl:
             return ydl.extract_info(f"ytsearch{limit}:{query}", download=False) or {}
 

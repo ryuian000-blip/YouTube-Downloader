@@ -14,7 +14,11 @@ comments in core.py), the fix goes in one place and every surface gets it.
 
 from .binaries import BinaryStatus, app_root, detect
 from .core import (
+    CANCELLED_MESSAGE,
+    CancelledError,
     EngineError,
+    PermanentError,
+    ensure_single_video_url,
     format_timestamp,
     parse_timestamp,
     resolve_runtime_paths,
@@ -79,7 +83,11 @@ __all__ = [
     "DOWNLOAD_COMPLETE_MESSAGE",
     "DownloadOptions",
     "DownloadResult",
+    "CANCELLED_MESSAGE",
+    "CancelledError",
     "EngineError",
+    "PermanentError",
+    "ensure_single_video_url",
     "Frame",
     "FrameSet",
     "MODE_AUDIO_ONLY",

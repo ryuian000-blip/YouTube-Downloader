@@ -13,6 +13,7 @@ the CLI/MCP report it in their JSON error payloads).
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -69,17 +70,29 @@ class BinaryStatus:
 
     @property
     def is_download_ready(self) -> bool:
-        """ffmpeg/ffprobe are required for merging; the JS runtime is
-        required for the download step to not 403. All three matter, but
-        this flag specifically covers whether downloads can be attempted."""
-        return bool(self.ffmpeg and self.ffprobe)
+        """Whether a download can actually be expected to succeed.
+
+        All three are required, and the JS runtime is not optional: without
+        deno, yt-dlp cannot solve YouTube's nsig challenge and downloads
+        fail with a 403 that looks like a network problem. This used to
+        return ``ffmpeg and ffprobe`` only, which made the MCP
+        ``check_setup`` tool report ready=true on machines where every
+        single download 403'd -- the CLI's ``doctor`` disagreed with it
+        because that one checks ``missing`` instead. One definition now.
+        """
+        return bool(self.ffmpeg and self.ffprobe and self.js_runtime)
 
 
 def _find(name: str, root: Path) -> Path | None:
     local = root / name
     if local.exists():
         return local
-    on_path = shutil.which(name)
+    # path=PATH explicitly, NOT shutil.which(name): on Windows, which()
+    # prepends the current working directory when path is None (CPython's
+    # _win_path_needs_curdir branch), so a planted ffmpeg.exe in whatever
+    # folder the CLI or MCP server happened to be launched from would win
+    # over the real one on PATH. Passing path skips that insertion.
+    on_path = shutil.which(name, path=os.environ.get("PATH"))
     return Path(on_path) if on_path else None
 
 

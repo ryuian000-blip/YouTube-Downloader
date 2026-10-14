@@ -13,7 +13,9 @@ applied, so a caller never believes it saw everything when it didn't.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,21 +132,45 @@ def _collect(output_dir: Path, pattern: str = "raw_*.jpg") -> list[Path]:
     return sorted(output_dir.glob(pattern))
 
 
-def _rename_with_timestamps(raw_files: list[Path], timestamps: list[float]) -> list[Frame]:
+def _rename_with_timestamps(
+    raw_files: list[Path], timestamps: list[float], dest: Path | None = None
+) -> list[Frame]:
     """ffmpeg can only number its outputs; the timestamp has to be applied
     afterwards. Naming files by time is the whole usability point -- an
     agent reading `frame_00-04-15.jpg` knows what it is looking at without
-    cross-referencing a JSON index."""
+    cross-referencing a JSON index.
+
+    dest moves the finished frames out of the staging directory they were
+    extracted into. Only the exact names this run produces are replaced,
+    so a pre-existing file in the destination is never collateral.
+    """
     frames: list[Frame] = []
     for index, raw in enumerate(raw_files):
         stamp = timestamps[index] if index < len(timestamps) else 0.0
         hms = format_timestamp(stamp).replace(":", "-")
-        target = raw.with_name(f"frame_{index + 1:03d}_{hms}.jpg")
+        name = f"frame_{index + 1:03d}_{hms}.jpg"
+        target = (dest / name) if dest is not None else raw.with_name(name)
         if target.exists():
             target.unlink()
-        raw.rename(target)
+        raw.replace(target)
         frames.append(Frame(path=target.resolve(), timestamp=stamp))
     return frames
+
+
+def _is_app_owned(output_dir: Path) -> bool:
+    """Whether this directory is our own scratch space.
+
+    Governs whether leftover frames from a previous run may be swept. A
+    caller-supplied --out could be a photo folder, and this module used to
+    unlink every frame_*.jpg and raw_*.jpg in it on sight.
+    """
+    from .download import cache_root
+
+    try:
+        output_dir.resolve().relative_to(cache_root().resolve())
+    except (ValueError, OSError):
+        return False
+    return True
 
 
 def extract_frames_from_file(
@@ -174,10 +200,26 @@ def extract_frames_from_file(
         raise EngineError(f"No such video file: {video_path}")
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    for stale in output_dir.glob("frame_*.jpg"):
-        stale.unlink()
-    for stale in output_dir.glob("raw_*.jpg"):
-        stale.unlink()
+    # Sweep previous frames ONLY in our own cache. This used to unlink
+    # every frame_*.jpg and raw_*.jpg in output_dir unconditionally --
+    # pointed at a photo folder via --out, or at a previous extraction the
+    # user wanted to keep, it destroyed files it had never written. In a
+    # caller's directory nothing is deleted now except the exact names
+    # this run produces (see _rename_with_timestamps), and the returned
+    # FrameSet lists the frames explicitly, so a leftover never gets
+    # mistaken for part of this result.
+    if _is_app_owned(output_dir):
+        for stale in output_dir.glob("frame_*.jpg"):
+            stale.unlink()
+
+    # ffmpeg's numbered intermediates go in a private staging dir, never
+    # in output_dir: it keeps raw_*.jpg out of the user's folder entirely,
+    # and it means _collect() can only ever see this run's own files
+    # rather than picking up an interrupted earlier run's leftovers.
+    staging = output_dir / f".ytdl-frames-{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
 
     max_frames = max(1, min(int(max_frames or DEFAULT_MAX_FRAMES), 200))
     width = max(160, min(int(width or DEFAULT_WIDTH), 1920))
@@ -218,31 +260,36 @@ def extract_frames_from_file(
     # One extra frame so we can tell "exactly at the cap" from "there was
     # more we didn't return".
     args += ["-frames:v", str(max_frames + 1), "-q:v", "3"]
-    args += [str(output_dir / "raw_%04d.jpg")]
+    args += [str(staging / "raw_%04d.jpg")]
 
-    stderr = _run_ffmpeg(args)
+    try:
+        stderr = _run_ffmpeg(args)
 
-    raw_files = _collect(output_dir)
-    if not raw_files:
-        raise EngineError(
-            "ffmpeg produced no frames — the range may be past the end of the "
-            "video, or the scene threshold too high."
-        )
+        raw_files = _collect(staging)
+        if not raw_files:
+            raise EngineError(
+                "ffmpeg produced no frames — the range may be past the end of the "
+                "video, or the scene threshold too high."
+            )
 
-    truncated = len(raw_files) > max_frames
-    if truncated:
-        for extra in raw_files[max_frames:]:
-            extra.unlink()
-        raw_files = raw_files[:max_frames]
+        truncated = len(raw_files) > max_frames
+        if truncated:
+            for extra in raw_files[max_frames:]:
+                extra.unlink()
+            raw_files = raw_files[:max_frames]
 
-    # showinfo timestamps are relative to the seek point, so add it back.
-    parsed = [float(m) + start_at for m in _SHOWINFO_PTS_RE.findall(stderr)]
-    if len(parsed) < len(raw_files):
-        # Fall back to arithmetic spacing if showinfo output was clipped.
-        step = float(interval) if mode == "interval" and interval else 0.0
-        parsed = [start_at + i * step for i in range(len(raw_files))]
+        # showinfo timestamps are relative to the seek point, so add it back.
+        parsed = [float(m) + start_at for m in _SHOWINFO_PTS_RE.findall(stderr)]
+        if len(parsed) < len(raw_files):
+            # Fall back to arithmetic spacing if showinfo output was clipped.
+            step = float(interval) if mode == "interval" and interval else 0.0
+            parsed = [start_at + i * step for i in range(len(raw_files))]
 
-    frames = _rename_with_timestamps(raw_files, parsed)
+        frames = _rename_with_timestamps(raw_files, parsed, dest=output_dir)
+    finally:
+        # Including on the no-frames and ffmpeg-failure paths: a failed
+        # run must not leave a hidden staging directory behind.
+        shutil.rmtree(staging, ignore_errors=True)
 
     note = None
     if truncated:

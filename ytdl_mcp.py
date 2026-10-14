@@ -37,8 +37,6 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 
 from ytdl_engine import (  # noqa: E402
-    DEFAULT_MAX_FRAMES,
-    DEFAULT_WHISPER_MODEL,
     MODE_AUDIO_ONLY,
     MODE_VIDEO,
     MODE_VIDEO_ONLY,
@@ -53,11 +51,39 @@ from ytdl_engine import (  # noqa: E402
     search_youtube,
 )
 from ytdl_engine.config import (  # noqa: E402
+    UserOnlySettingError,
+    allowed_values,
     load_settings,
     settings_path,
     update_settings,
 )
 from ytdl_engine.download import download as run_download  # noqa: E402
+
+# Set once the first-download gate has actually handed the defaults back
+# to the assistant (and so into the conversation the user can see). Guards
+# the case where a first call simply asserts confirmed=true -- see the
+# gate in download_video_tool. Process-scoped on purpose: it is about what
+# happened in *this* conversation, not a durable fact about the machine,
+# which is what Settings.defaults_confirmed records.
+_confirmation_offered = False
+
+
+def _mark_confirmation_offered() -> None:
+    global _confirmation_offered
+    _confirmation_offered = True
+
+
+async def _resolve_target_dir(output_dir: str | None, settings) -> Path:
+    """Work out the destination folder without blocking the event loop.
+
+    Path.resolve() is a filesystem call, not string manipulation: on
+    Windows a path on a disconnected network drive can stall for seconds,
+    and this server's event loop serves every other tool call. expanduser
+    only reads the environment, so the no-override branch is cheap.
+    """
+    if not output_dir:
+        return settings.resolved_download_dir()
+    return await asyncio.to_thread(lambda: Path(output_dir).expanduser().resolve())
 
 mcp = MCPServer(
     name="youtube-downloader",
@@ -181,7 +207,20 @@ async def get_transcript_tool(
     ] = False,
     whisper_model: Annotated[
         str | None,
-        Field(description="Whisper model size if local transcription runs. Omit for the configured default."),
+        # The accepted list is stated here rather than left free-form, and
+        # pulled from config so it cannot drift from what is enforced.
+        # faster-whisper treats any value containing "/" as a Hugging Face
+        # repo id and downloads it, so an unconstrained string meant a
+        # tool parameter could fetch arbitrary remote weights and hand
+        # them to a native deserializer. config rejects that now; saying
+        # so here stops an assistant guessing a name and getting an error.
+        Field(
+            description=(
+                "Whisper model size if local transcription runs. Omit for the "
+                "configured default. One of: "
+                + ", ".join(allowed_values("whisper_model"))
+            )
+        ),
     ] = None,
     whisper_device: Annotated[
         Literal["auto", "cuda", "cpu"] | None,
@@ -356,12 +395,19 @@ async def download_video_tool(
     # of writing a file the user never chose the shape of. Structural, not
     # advisory -- see Settings.defaults_confirmed for why this isn't just
     # a line in the skill.
+    #
+    # `confirmed` is a parameter the *model* sets, so on its own it only
+    # attests that an assistant says the user agreed. What this gate can
+    # enforce honestly is the step before that: the defaults must have
+    # actually been handed back, into the conversation where the user can
+    # see them, before any file is written. _confirmation_offered records
+    # that. A first call arriving with confirmed=true has shown the user
+    # nothing, so it gets the prompt rather than a download.
+    if not settings.defaults_confirmed and confirmed and not _confirmation_offered:
+        confirmed = False
     if not settings.defaults_confirmed and not confirmed:
-        target = (
-            Path(output_dir).expanduser().resolve()
-            if output_dir
-            else settings.resolved_download_dir()
-        )
+        _mark_confirmation_offered()
+        target = await _resolve_target_dir(output_dir, settings)
         cap = quality if quality is not None else settings.max_height
         return {
             "needs_confirmation": True,
@@ -389,11 +435,7 @@ async def download_video_tool(
         }
     # Every omitted argument falls through to the user's settings, so
     # their configured cap/folder genuinely governs what an agent does.
-    target_dir = (
-        Path(output_dir).expanduser().resolve()
-        if output_dir
-        else settings.resolved_download_dir()
-    )
+    target_dir = await _resolve_target_dir(output_dir, settings)
     options = DownloadOptions(
         url=url,
         mode=mode_map.get(mode or "", settings.default_mode),
@@ -409,8 +451,11 @@ async def download_video_tool(
     result = await _run(run_download, options, settings=settings)
     if not settings.defaults_confirmed:
         # They've now seen the defaults and agreed, so don't ask again.
+        # allow_user_only: this records a decision the user made, relayed
+        # through the tool -- the only place an assistant may write this
+        # flag, and only after the two-step gate above.
         try:
-            update_settings({"defaults_confirmed": True})
+            update_settings({"defaults_confirmed": True}, allow_user_only=True)
         except Exception:  # noqa: BLE001 -- never fail a finished download
             pass           # over a settings write; worst case we re-ask.
     return {
@@ -450,11 +495,12 @@ async def get_settings_tool() -> dict[str, Any]:
     }
 
 
-# Changing this would let an assistant switch off the very prompt that
-# exists to get the user's agreement before the first download. It is
-# settable by the user -- in the app, on the CLI, or by actually
-# confirming -- and by nothing else.
-_USER_ONLY_SETTINGS = {"defaults_confirmed"}
+# The list of settings an assistant may not change now lives in
+# ytdl_engine.config, enforced inside update_settings() itself. It used to
+# be enforced here, which meant the CLI's `config set` bypassed it
+# entirely -- the guard sat on one of three callers instead of at the
+# chokepoint they all go through. This module no longer needs its own
+# copy; it just surfaces UserOnlySettingError readably.
 
 
 @mcp.tool(
@@ -488,14 +534,6 @@ async def update_settings_tool(
     if not changes:
         raise _fail("No changes given.")
 
-    blocked = _USER_ONLY_SETTINGS & set(changes)
-    if blocked:
-        raise _fail(
-            f"{', '.join(sorted(blocked))} can only be set by the user — "
-            "it records that they've seen where downloads go and at what "
-            "quality. Ask them to confirm the download instead."
-        )
-
     before = load_settings().as_dict()
     unknown = [key for key in changes if key not in before]
     if unknown:
@@ -508,6 +546,10 @@ async def update_settings_tool(
         updated = await _run(update_settings, changes)
     except ToolError:
         raise
+    except UserOnlySettingError as exc:
+        # Not a failure to report as a bug -- it's a boundary. Say what to
+        # ask the user to do instead of just refusing.
+        raise _fail(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise _fail(f"Couldn't save settings: {exc}") from exc
 

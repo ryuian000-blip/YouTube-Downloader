@@ -45,7 +45,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
-    QGraphicsDropShadowEffect,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -1192,7 +1191,6 @@ class IconButton(QAbstractButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = rect.height() / 2
         enabled = self.isEnabled()
 
         if not enabled:
@@ -1527,6 +1525,11 @@ class ElidedLabel(QLabel):
     def __init__(self, text: str = "", parent=None) -> None:
         super().__init__(text, parent)
         self._full_text = text
+        # This widget exists to display strings from outside the app --
+        # file paths and video titles -- so it opts out of Qt's AutoText
+        # markup parsing for every instance rather than leaving each
+        # caller to remember.
+        self.setTextFormat(Qt.PlainText)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 (Qt override)
@@ -1608,8 +1611,25 @@ class UrlLineEdit(QLineEdit):
     def clear_error(self) -> None:
         if not self._in_error:
             return
+        # set_error() replaced the DISPLAYED text with the error sentence
+        # while keeping the real URL in _real_url. Clearing the flag
+        # without putting the real URL back left the sentence on screen
+        # and -- because url() trusts text() once _in_error is false --
+        # made url() return "Couldn't read that link..." as if the user
+        # had typed it.
+        #
+        # Restore only when the field is actually still showing the error.
+        # _on_text_edited() calls this the moment the user types, and at
+        # that point text() is their new input while _real_url is the old
+        # URL; overwriting would delete what they were in the middle of
+        # typing. Comparing against _error_message distinguishes the two
+        # callers without either needing to say which it is.
+        showing_error = self.text() == self._error_message
         self._in_error = False
         self._error_message = ""
+        if showing_error:
+            super().setText(self._real_url)
+            self.setCursorPosition(0)
         set_role(self, "", "state")
 
     def focusInEvent(self, event) -> None:

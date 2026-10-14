@@ -126,6 +126,24 @@ it came from.
   and all three write the same file.
 
 ## Judgment calls
+**Playlists, channels and live streams are refused, not attempted.** A
+`/playlist?list=`, `/@handle/videos`, `/channel/...` or `/results?...`
+URL fails immediately with a message saying to use a single video's link
+— the tools download one video at a time. A live stream fails too (there
+is no end to download to). Neither is worth retrying. If the user wants
+a whole playlist, say so plainly rather than looping over it yourself
+without telling them.
+
+**`default_mode` is `audio_only`, not `audio`.** The `--mode` flag uses
+`audio`; the *setting* uses `audio_only`. Setting it to anything else is
+rejected with a message naming the valid values, so if you are relaying
+a "always download audio" request, use `audio_only`.
+
+**Subtitles include auto-captions.** The subtitles option fetches
+human-authored subtitles when they exist and YouTube's auto-captions
+otherwise, in the user's `transcript_language`. It used to silently do
+nothing on the majority of videos, which have auto-captions only.
+
 
 **Read frames, don't skim them.** Five frames you actually look at beat
 fifty you list. Frames cost far more context than transcript text, so

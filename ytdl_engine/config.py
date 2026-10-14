@@ -152,12 +152,61 @@ class Settings:
 
 _FIELD_TYPES = {f.name: f.type for f in fields(Settings)}
 
+# Fields whose *value* matters, not just its type. Without this a typo'd
+# or wrongly-spelled value was accepted and then silently misbehaved
+# somewhere far away: `default_mode=audio` (the spelling the CLI's own
+# --mode flag uses) is not a valid mode, and it used to reach
+# format_string(), fall through to the audio branch, skip the mp3
+# postprocessor, and produce an audio-only stream the caller was told
+# would be an .mp4. Rejecting it here -- at the one chokepoint every
+# surface goes through -- means a bad value is reported where it was
+# typed instead of becoming a wrong file an hour later.
+#
+# whisper_model is constrained for a second reason: faster-whisper
+# treats any value containing "/" as a Hugging Face repo id and
+# downloads it, so a free-form string let an agent-set value pull
+# arbitrary remote weights into a native deserializer. These are the
+# size names faster-whisper itself recognises.
+_ALLOWED_VALUES: dict[str, tuple[str, ...]] = {
+    "default_mode": ("video", "video_only", "audio_only"),
+    "audio_format": ("mp3", "m4a", "wav"),
+    "whisper_device": ("auto", "cuda", "cpu"),
+    "whisper_model": (
+        "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+        "medium", "medium.en", "large", "large-v1", "large-v2",
+        "large-v3", "large-v3-turbo", "turbo",
+        "distil-small.en", "distil-medium.en",
+        "distil-large-v2", "distil-large-v3",
+    ),
+}
+
+# Settings only the user may change, never an assistant. Enforced here,
+# in update_settings, rather than in the MCP server: the guard used to
+# live on one of three callers, so the CLI's `config set` bypassed it
+# completely. The default is the safe one, so a surface added later is
+# restricted until it deliberately opts out.
+#
+#   defaults_confirmed -- the first-download consent flag. An assistant
+#     flipping this is an assistant granting itself permission.
+#   cache_dir -- feeds shutil.rmtree in prune_cache/clear_cache. Even
+#     with cache_root() now confined to its own subdirectory, there is no
+#     reason an assistant needs to move a scratch folder.
+#
+# download_dir is deliberately NOT here: pointing downloads somewhere
+# else is a documented thing to ask for ("always save to D:/Videos"),
+# nothing is ever overwritten (force_overwrite defaults to False), and
+# the skill tells assistants to use update_settings for exactly that.
+_USER_ONLY_SETTINGS = frozenset({"defaults_confirmed", "cache_dir"})
+
 
 def _coerce(name: str, raw: Any) -> Any:
     """Turn a JSON value or an env string into the field's real type.
 
     Env vars arrive as strings, and "none"/"" has to mean None so a user
     can clear a cap from the shell as easily as from the file.
+
+    Raises ValueError for a value outside _ALLOWED_VALUES. Callers that
+    must not fail (load_settings) catch it and keep the default.
     """
     if raw is None:
         return None
@@ -172,18 +221,40 @@ def _coerce(name: str, raw: Any) -> Any:
             return int(float(text))
         if "float" in declared:
             return float(text)
-        return text
+        return _check_allowed(name, text)
     if "bool" in declared:
         return bool(raw)
     if "int" in declared and isinstance(raw, (int, float)):
         return int(raw)
     if "float" in declared and isinstance(raw, (int, float)):
         return float(raw)
+    if isinstance(raw, str):
+        return _check_allowed(name, raw)
     return raw
+
+
+def _check_allowed(name: str, text: str) -> str:
+    allowed = _ALLOWED_VALUES.get(name)
+    if allowed and text not in allowed:
+        raise ValueError(
+            f"{name} must be one of: {', '.join(allowed)} (got {text!r})."
+        )
+    return text
 
 
 def known_fields() -> list[str]:
     return [f.name for f in fields(Settings)]
+
+
+def allowed_values(name: str) -> tuple[str, ...]:
+    """The accepted values for a constrained setting, else ().
+
+    Public so the CLI help and the MCP tool descriptions can state the
+    constraint without restating the list -- a second copy is a copy that
+    drifts, and the MCP schema in particular is what an assistant reads
+    instead of guessing.
+    """
+    return _ALLOWED_VALUES.get(name, ())
 
 
 def load_settings(path: Path | None = None) -> Settings:
@@ -191,6 +262,20 @@ def load_settings(path: Path | None = None) -> Settings:
 
     Never raises: a corrupt or unreadable settings file falls back to the
     defaults rather than taking the whole app down over a stray comma.
+
+    The except clauses below are wider than they look like they need to
+    be, and both widenings are load-bearing. This function runs at import
+    time on all three surfaces, so anything that escapes here takes down
+    the GUI, the CLI and the MCP server at startup with no way back
+    except deleting the file by hand:
+
+      - ValueError at the file read, not json.JSONDecodeError: a file
+        containing invalid UTF-8 raises UnicodeDecodeError, which is a
+        ValueError but NOT a JSONDecodeError, so it used to escape.
+      - ArithmeticError per field: _coerce does int(float(text)), and
+        float("1e400") is inf, so int() raises OverflowError -- an
+        ArithmeticError, not a ValueError. Reachable from the file or
+        from YTDL_MAX_HEIGHT=1e400.
     """
     settings = Settings()
     target = path or settings_path()
@@ -203,9 +288,9 @@ def load_settings(path: Path | None = None) -> Settings:
                     if key in _FIELD_TYPES:
                         try:
                             setattr(settings, key, _coerce(key, value))
-                        except (TypeError, ValueError):
+                        except (TypeError, ValueError, ArithmeticError):
                             pass  # keep the default for that one field
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         pass
 
     for name in known_fields():
@@ -213,7 +298,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if raw is not None:
             try:
                 setattr(settings, name, _coerce(name, raw))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, ArithmeticError):
                 pass
 
     return settings
@@ -232,10 +317,31 @@ def save_settings(settings: Settings, path: Path | None = None) -> Path:
     return target
 
 
-def update_settings(changes: dict[str, Any], path: Path | None = None) -> Settings:
+class UserOnlySettingError(PermissionError):
+    """An assistant tried to change a setting only the user may change.
+
+    A distinct type so the MCP server can turn it into a tool error that
+    tells the assistant what to ask the user to do instead, rather than
+    reporting it as a generic failure.
+    """
+
+
+def update_settings(
+    changes: dict[str, Any],
+    path: Path | None = None,
+    *,
+    allow_user_only: bool = False,
+) -> Settings:
     """Apply changes on top of what's on disk (NOT on top of the
     env-merged view), then save. Unknown keys raise, so a typo'd setting
-    name is reported instead of silently doing nothing."""
+    name is reported instead of silently doing nothing.
+
+    allow_user_only gates _USER_ONLY_SETTINGS and defaults to False --
+    the restrictive value -- so this is safe to call from a new surface
+    without remembering to pass anything. The GUI and the CLI pass True
+    because both are the user operating the app directly; the MCP server
+    never does.
+    """
     target = path or settings_path()
     on_disk = Settings()
     try:
@@ -244,8 +350,11 @@ def update_settings(changes: dict[str, Any], path: Path | None = None) -> Settin
             if isinstance(data, dict):
                 for key, value in data.items():
                     if key in _FIELD_TYPES:
-                        setattr(on_disk, key, _coerce(key, value))
-    except (OSError, json.JSONDecodeError):
+                        try:
+                            setattr(on_disk, key, _coerce(key, value))
+                        except (TypeError, ValueError, ArithmeticError):
+                            pass  # a bad value already on disk keeps its default
+    except (OSError, ValueError):
         pass
 
     unknown = [k for k in changes if k not in _FIELD_TYPES]
@@ -254,6 +363,14 @@ def update_settings(changes: dict[str, Any], path: Path | None = None) -> Settin
             f"Unknown setting(s): {', '.join(sorted(unknown))}. "
             f"Valid settings: {', '.join(known_fields())}"
         )
+    if not allow_user_only:
+        blocked = sorted(_USER_ONLY_SETTINGS & set(changes))
+        if blocked:
+            raise UserOnlySettingError(
+                f"{', '.join(blocked)} can only be changed by the user, "
+                "in the app's Settings page or with "
+                f"`ytdl-agent config set {blocked[0]}=...`."
+            )
     for key, value in changes.items():
         setattr(on_disk, key, _coerce(key, value))
     save_settings(on_disk, target)
@@ -273,7 +390,7 @@ def describe_sources(path: Path | None = None) -> dict[str, str]:
                 for key in data:
                     if key in sources:
                         sources[key] = "settings file"
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         pass
     for name in known_fields():
         if os.environ.get(f"{_ENV_PREFIX}{name.upper()}") is not None:

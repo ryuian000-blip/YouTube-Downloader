@@ -17,7 +17,6 @@ from ytdl_engine.config import (
     describe_sources,
     known_fields,
     load_settings,
-    save_settings,
     settings_path,
     update_settings,
 )

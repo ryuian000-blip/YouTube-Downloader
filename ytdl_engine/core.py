@@ -79,6 +79,30 @@ class EngineError(RuntimeError):
     tool result -- callers should never need to format a traceback."""
 
 
+class CancelledError(EngineError):
+    """The caller asked for the operation to stop.
+
+    Not a failure, and deliberately not a PermanentError subclass of
+    anything retryable: run_with_retry must never re-attempt something
+    the user just cancelled. Callers should treat this as "stopped", not
+    "broken" -- the GUI shows "Download cancelled.", not a red error.
+    """
+
+
+CANCELLED_MESSAGE = "Download cancelled."
+
+
+class PermanentError(EngineError):
+    """A failure that retrying cannot possibly fix.
+
+    run_with_retry re-raises these immediately instead of burning three
+    attempts and four seconds of sleep on a certainty. A 403 on a signed
+    URL is worth retrying (fresh URLs may work); "this is a live stream"
+    and "that's a playlist URL" are not -- they will be just as true on
+    attempt three, and the delay only makes the real reason arrive late.
+    """
+
+
 def strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
@@ -96,6 +120,54 @@ def tidy_error(exc: BaseException, fallback: str = "Operation failed.") -> str:
     if len(message) > 300:
         message = message[:297] + "..."
     return message or fallback
+
+
+# Paths and path prefixes that identify a URL as pointing at MANY videos
+# rather than one. Checked before any network call -- see
+# ensure_single_video_url.
+_LISTING_PATHS = frozenset({"/playlist", "/results"})
+_LISTING_PREFIXES = ("/channel/", "/c/", "/user/", "/@", "/feed/")
+
+
+def ensure_single_video_url(url: str) -> None:
+    """Refuse a playlist, channel, or search-results URL up front.
+
+    ``noplaylist`` does NOT cover this. That option means "if this URL is
+    a video *and* a playlist, take just the video" -- so it handles a
+    /watch?v=ID&list=... link, which is what it was added for. A bare
+    /playlist?list=... or /@handle/videos URL is not a video at all, so
+    the option does not apply and yt-dlp expands the whole thing: a
+    200-video channel would download 200 files, while _final_path() read
+    requested_downloads[0] and reported a single success with one path.
+    The caller had no way to tell what had happened.
+
+    A URL-shape check rather than a metadata probe, because it has to be
+    free -- this runs before every download, and paying a round trip to
+    discover something the URL already says would tax the common case to
+    guard the rare one. Anything not recognised here is passed through
+    for yt-dlp to accept or reject on its own.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return  # malformed; let yt-dlp produce the error message
+    path = (parsed.path or "/").rstrip("/").lower() or "/"
+
+    if path in _LISTING_PATHS or path.startswith(_LISTING_PREFIXES):
+        what = "playlist" if path == "/playlist" else "channel or search"
+        raise PermanentError(
+            f"That's a {what} URL, not a single video. This app downloads "
+            "one video at a time -- open the video you want and use its "
+            "own link (the one with /watch?v= or youtu.be/ in it)."
+        )
+    # youtube.com/?list=... with no video id: a playlist by another name.
+    if path == "/" and "list=" in (parsed.query or "").lower():
+        raise PermanentError(
+            "That link points at a playlist rather than one video. Use a "
+            "single video's own link (/watch?v=... or youtu.be/...)."
+        )
 
 
 def base_opts(js_runtime_path: str | None = None, **extra: Any) -> dict:
@@ -169,6 +241,12 @@ def run_with_retry(
     for attempt in range(1, max_attempts + 1):
         try:
             return action()
+        except (CancelledError, PermanentError):
+            # Deliberately not retried, and deliberately not re-wrapped:
+            # the message already says what is permanently wrong -- or,
+            # for a cancellation, that the user asked it to stop, which
+            # three more attempts would actively defy.
+            raise
         except Exception as exc:  # noqa: BLE001 -- deliberately broad
             last_message = tidy_error(exc, fallback_message)
             if attempt == max_attempts:

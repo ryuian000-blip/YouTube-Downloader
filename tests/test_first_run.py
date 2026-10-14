@@ -24,6 +24,12 @@ def run(coro):
 def download_tool():
     import ytdl_mcp
 
+    # _confirmation_offered is module state that outlives a single test:
+    # once any test has tripped the gate, a later test's "first" call
+    # would find the prompt already offered and behave differently
+    # depending on execution order. Reset it so each test starts from a
+    # genuinely fresh conversation.
+    ytdl_mcp._confirmation_offered = False
     return ytdl_mcp.download_video_tool
 
 
@@ -50,21 +56,30 @@ def test_first_download_asks_instead_of_downloading(download_tool):
 
 def test_the_question_names_the_folder_and_quality(download_tool):
     update_settings({"max_height": 720, "download_dir": "D:/Videos"})
-    payload = run(download_tool(url="https://youtu.be/x"))
+    with patch("yt_dlp.YoutubeDL") as ydl:
+        payload = run(download_tool(url="https://youtu.be/x"))
     question = payload["ask_the_user"]
     assert "D:" in question and "Videos" in question
     assert "720" in question
+    assert ydl.call_count == 0
 
 
 def test_best_available_is_described_in_words_not_as_none(download_tool):
     update_settings({"max_height": None})
-    payload = run(download_tool(url="https://youtu.be/x"))
+    with patch("yt_dlp.YoutubeDL") as ydl:
+        payload = run(download_tool(url="https://youtu.be/x"))
     assert payload["quality"] == "best available"
     assert "None" not in payload["ask_the_user"]
+    assert ydl.call_count == 0
 
 
-def test_confirmed_call_downloads_and_records_the_choice(download_tool, tmp_path):
+def test_confirming_an_asked_question_downloads_and_records_the_choice(
+    download_tool, tmp_path
+):
+    """The normal two-step: the tool asks, the user agrees, it downloads."""
     with patch("yt_dlp.YoutubeDL", return_value=mock_ydl()):
+        asked = run(download_tool(url="https://youtu.be/x", output_dir=str(tmp_path)))
+        assert asked["needs_confirmation"] is True
         payload = run(
             download_tool(
                 url="https://youtu.be/x", output_dir=str(tmp_path), confirmed=True
@@ -75,8 +90,30 @@ def test_confirmed_call_downloads_and_records_the_choice(download_tool, tmp_path
     assert load_settings().defaults_confirmed is True
 
 
+def test_a_first_call_cannot_confirm_itself(download_tool, tmp_path):
+    """confirmed=true on the very first call shows the user nothing.
+
+    `confirmed` is a parameter the model fills in, so by itself it only
+    attests that an assistant says the user agreed. What the gate can
+    enforce is that the defaults were actually handed back first -- into
+    the conversation, where the user can see them. A call that arrives
+    already-confirmed, before anything was ever asked, must get the
+    question rather than a file on disk.
+    """
+    with patch("yt_dlp.YoutubeDL") as ydl:
+        payload = run(
+            download_tool(
+                url="https://youtu.be/x", output_dir=str(tmp_path), confirmed=True
+            )
+        )
+    assert payload["needs_confirmation"] is True
+    assert ydl.call_count == 0, "a self-confirmed first call must not download"
+    assert load_settings().defaults_confirmed is False
+
+
 def test_it_only_asks_once(download_tool, tmp_path):
     with patch("yt_dlp.YoutubeDL", return_value=mock_ydl()):
+        run(download_tool(url="https://youtu.be/x", output_dir=str(tmp_path)))
         run(download_tool(url="https://youtu.be/x", output_dir=str(tmp_path), confirmed=True))
         second = run(download_tool(url="https://youtu.be/y", output_dir=str(tmp_path)))
     assert "needs_confirmation" not in second, "a per-download prompt gets clicked through"
@@ -85,19 +122,39 @@ def test_it_only_asks_once(download_tool, tmp_path):
 
 def test_setup_confirm_also_satisfies_the_gate(download_tool, tmp_path):
     """Someone who ran `setup --confirm` has already seen the defaults."""
-    update_settings({"defaults_confirmed": True})
+    # allow_user_only mirrors what `ytdl_cli setup --confirm` passes: the
+    # user ran that command themselves, and that is the consent.
+    update_settings({"defaults_confirmed": True}, allow_user_only=True)
     with patch("yt_dlp.YoutubeDL", return_value=mock_ydl()):
         payload = run(download_tool(url="https://youtu.be/x", output_dir=str(tmp_path)))
     assert "needs_confirmation" not in payload
 
 
+def test_an_assistant_cannot_flip_the_gate_through_update_settings(download_tool):
+    """The guard lives in config.update_settings, not on one caller.
+
+    It used to sit in the MCP server only, so `ytdl_cli config set
+    defaults_confirmed=true` -- one Bash call away for any agent that has
+    both tools -- walked straight past it.
+    """
+    import ytdl_engine.config as config
+
+    with pytest.raises(config.UserOnlySettingError):
+        config.update_settings({"defaults_confirmed": True})
+    with pytest.raises(config.UserOnlySettingError):
+        config.update_settings({"cache_dir": "C:/Users/someone/Documents"})
+    assert load_settings().defaults_confirmed is False
+
+
 def test_gate_reflects_a_per_call_override_not_just_the_defaults(download_tool):
     """If the agent passes an explicit folder/quality, confirm THOSE."""
-    payload = run(
-        download_tool(url="https://youtu.be/x", output_dir="E:/Elsewhere", quality=480)
-    )
+    with patch("yt_dlp.YoutubeDL") as ydl:
+        payload = run(
+            download_tool(url="https://youtu.be/x", output_dir="E:/Elsewhere", quality=480)
+        )
     assert "Elsewhere" in payload["download_folder"]
     assert "480" in payload["ask_the_user"]
+    assert ydl.call_count == 0, "must not reach the network to answer this"
 
 
 # ---------------------------------------------------------------------------

@@ -19,12 +19,12 @@ The module-level names re-exported below are the GUI's import surface
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 from ytdl_engine import (
+    CancelledError,
     DownloadOptions,
     EngineError,
     MODE_AUDIO_ONLY,
@@ -146,10 +146,28 @@ class DownloadWorker(QThread):
     progress = Signal(float, str)   # percent 0-100, status text
     succeeded = Signal(str)         # final message
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(self, options: DownloadOptions, parent=None) -> None:
         super().__init__(parent)
         self._opts = options
+        # Plain bool, no lock: it is written only from the GUI thread and
+        # read only from this one, and a torn read is impossible for a
+        # single attribute assignment under the GIL. The worst case is
+        # noticing the cancel one progress tick late, which is fine --
+        # ticks arrive every few hundred milliseconds.
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Ask the download to stop. Safe to call from the GUI thread.
+
+        Cooperative rather than terminate(): the engine notices this on
+        its next progress tick and unwinds yt-dlp normally, which leaves
+        a resumable .part file instead of a half-written output file and
+        a thread killed mid-syscall.
+        """
+        self._cancel_requested = True
+        self.requestInterruption()
 
     def run(self) -> None:
         try:
@@ -162,7 +180,15 @@ class DownloadWorker(QThread):
                 # chip right next to the button -- refusing there would
                 # just be the app blocking its own user.
                 enforce_limits=False,
+                should_cancel=lambda: self._cancel_requested,
             )
+        except CancelledError:
+            # Not a failure: the user asked for this. Separate signal so
+            # the window can say "Cancelled." in the normal status colour
+            # rather than flashing a red error at someone who just
+            # changed their mind.
+            self.cancelled.emit()
+            return
         except EngineError as exc:
             self.failed.emit(str(exc) or "Download failed.")
             return
