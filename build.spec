@@ -54,8 +54,12 @@ exe_suffix = ".exe" if is_windows else ""
 # Why this is a variant and not just always-on: transcription is the only
 # feature in here with a native-code dependency -- a ~59MB CTranslate2
 # DLL, ONNX Runtime for the voice-activity filter, numpy and tokenizers.
-# Measured on Windows at v1.0.1: 494MB -> 683MB unpacked, 205MB -> 281MB
-# zipped, so +76MB (+37%) on the download. The large majority of YouTube
+# Measured on Windows at v1.0.1, from a LOCAL build (CI totals are larger
+# -- it installs a much bigger ffmpeg build than the one a developer
+# usually drops in by hand -- but the DELTA below is the same either way,
+# since it is only the engine): 494MB -> 683MB unpacked, 205MB -> 281MB
+# zipped, so +76MB on the download; +53MB on macOS, where CTranslate2 has
+# no CUDA code path at all. The large majority of YouTube
 # videos have captions and need none of it, so making every downloader
 # pay that to serve the minority who hit a caption-less video is the
 # wrong default. Two assets, clearly labelled, is the trade.

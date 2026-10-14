@@ -23,7 +23,11 @@ know you need the other:
 | Downloads, subtitles, info, frames | yes | yes |
 | Transcripts of videos **with** captions | yes | yes |
 | Transcripts of videos with **no** captions | no | yes |
-| Windows download | ~205 MB | ~281 MB |
+| Download size | smaller | ~75 MB more on Windows, ~55 MB on macOS |
+
+(Exact sizes are on the Releases page. Only the *difference* between the
+two is quoted here, because that part is stable — it is the transcription
+engine — while the totals move with whatever ffmpeg build CI picks up.)
 
 Caption-less videos have to be transcribed on your own machine, which
 needs a speech-recognition engine too big to put in everyone's download
