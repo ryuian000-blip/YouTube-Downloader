@@ -21,8 +21,11 @@ jobs:
     # and each gets a clean runner -- no chance of one variant's
     # PyInstaller cache leaking into the other.
     #
-    # fail-fast: false deliberately. The standard asset is the one almost
-    # everyone downloads; a broken full build must not also cancel it.
+    # fail-fast: false deliberately: one variant failing must not cancel
+    # the other mid-build, so a tag run shows you BOTH results instead of
+    # whichever broke first. Note the `release` job still needs every leg
+    # green -- a release that promises four assets and ships two would be
+    # worse than a tag that visibly failed and can be re-cut.
     strategy:
       fail-fast: false
       matrix:
@@ -257,9 +260,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*.zip
-          generate_release_notes: true
+          # The body below is the evergreen part -- which file to take and
+          # how to get past each OS's first-run warning -- so it stays
+          # correct release to release. Per-release "what changed" notes are
+          # written by hand afterwards (gh release edit --notes-file) rather
+          # than generated, because a list of commit subjects tells a
+          # downloader nothing about whether to re-download.
+          generate_release_notes: false
           body: |
             ## Download
+
+            **Take the standard zip** unless you specifically need to
+            transcribe videos that have no captions.
 
             - **Windows** — `YouTube-Downloader-windows.zip`
               Unzip, keep the folder together, run `YouTube Downloader.exe`.
@@ -271,7 +283,19 @@ jobs:
               open: System Settings → Privacy & Security → **Open Anyway**.
               (`How To Open YouTube Downloader.html` is in the zip.)
 
-            Both include everything needed — no Python, no ffmpeg install.
+            All include everything needed — no Python, no ffmpeg install.
+
+            ### The `-full` zips
+
+            `YouTube-Downloader-windows-full.zip` and
+            `YouTube-Downloader-macos-full.zip` are the same app plus the
+            speech-recognition engine, so they can transcribe a video that
+            has **no captions** — about 75MB more to download. Most videos
+            have captions and need none of it, and the standard zip will
+            tell you if you ever hit one that does.
+
+            Transcription is reached through `ytdl-agent` (below), not from
+            the app's own window, so take a `-full` zip only if you use that.
 
             ## Letting Claude watch videos
 
