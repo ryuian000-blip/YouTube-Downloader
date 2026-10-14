@@ -52,7 +52,39 @@ jobs:
         run: pip install -U --pre "yt-dlp[default]"
 
       - name: Install ffmpeg via Chocolatey
-        run: choco install ffmpeg-full -y
+        # Retried and then VERIFIED, because `choco install` exits 0 when
+        # the community feed is unreachable, having installed nothing:
+        #
+        #   Failed to fetch results from V2 feed ... 504 (Gateway Timeout)
+        #   Unable to find package 'ffmpeg-full'.
+        #   Chocolatey installed 0/0 packages.
+        #
+        # That is a real chocolatey.org outage from 2026-10-14, and with a
+        # bare `choco install -y` it did not fail this step -- it failed
+        # the NEXT one, as "The term 'ffmpeg' is not recognized", which
+        # points at the wrong thing entirely. Worse, build.spec skips
+        # missing binaries by design (so a dev checkout can build before
+        # they are copied in), so a silent miss here is exactly the shape
+        # of bug that ships a release whose downloads all fail.
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            Write-Host "::group::choco install ffmpeg-full (attempt $i of 3)"
+            choco install ffmpeg-full -y --no-progress
+            Write-Host "::endgroup::"
+            if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { break }
+            if ($i -lt 3) {
+              Write-Host "ffmpeg not on PATH yet; waiting 30s before retrying"
+              Start-Sleep -Seconds 30
+            }
+          }
+          foreach ($tool in @("ffmpeg", "ffprobe")) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "$tool is still missing after 3 attempts. Is community.chocolatey.org reachable?"
+            }
+          }
+          Write-Host "ffmpeg:  $((Get-Command ffmpeg).Source)"
+          Write-Host "ffprobe: $((Get-Command ffprobe).Source)"
 
       - name: Copy ffmpeg/ffprobe next to the project
         shell: pwsh
@@ -61,6 +93,22 @@ jobs:
           $ffprobe = (Get-Command ffprobe).Source
           Copy-Item $ffmpeg -Destination .\ffmpeg.exe
           Copy-Item $ffprobe -Destination .\ffprobe.exe
+          # Sanity-check what actually got copied. Chocolatey puts a small
+          # launcher "shim" on PATH as well as the real binary, and a shim
+          # copied out of chocolatey\bin cannot find its target any more --
+          # it would bundle cleanly and then fail on the user's machine,
+          # which is the worst possible place to discover it. A real static
+          # ffmpeg is tens of MB; a shim is well under one.
+          foreach ($f in @(".\ffmpeg.exe", ".\ffprobe.exe")) {
+            $mb = [math]::Round((Get-Item $f).Length / 1MB, 1)
+            Write-Host "$f -> $mb MB"
+            if ($mb -lt 5) {
+              throw "$f is only $mb MB -- that looks like a chocolatey shim, not the real binary."
+            }
+          }
+          # And prove it runs, here, rather than trusting the file size.
+          & .\ffmpeg.exe -version | Select-Object -First 1
+          & .\ffprobe.exe -version | Select-Object -First 1
 
       - name: Download Deno
         shell: pwsh
